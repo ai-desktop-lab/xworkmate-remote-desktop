@@ -37,6 +37,10 @@ func GetService() *Service {
 }
 
 func (s *Service) StartSession(sessionID string, cfg PipelineConfig, iceServers []string) (*DesktopSession, error) {
+	return s.StartSessionWithOptions(sessionID, cfg, iceServers, WebRTCOptions{})
+}
+
+func (s *Service) StartSessionWithOptions(sessionID string, cfg PipelineConfig, iceServers []string, opts WebRTCOptions) (*DesktopSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -61,7 +65,7 @@ func (s *Service) StartSession(sessionID string, cfg PipelineConfig, iceServers 
 		return nil, fmt.Errorf("failed to create WebRTC server: %w", err)
 	}
 
-	if err := webrtcSrv.InitPeerConnection(iceServers); err != nil {
+	if err := webrtcSrv.InitPeerConnectionWithOptions(iceServers, opts); err != nil {
 		_ = injector.Close()
 		return nil, fmt.Errorf("failed to init peer connection: %w", err)
 	}
