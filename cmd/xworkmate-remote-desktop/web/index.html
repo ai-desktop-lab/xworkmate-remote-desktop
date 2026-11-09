@@ -175,13 +175,34 @@
     const video = document.getElementById("remote-video");
     const overlayMsg = document.getElementById("overlay-msg");
 
-    // Load saved token from sessionStorage
-    const savedToken = sessionStorage.getItem("xworkmate_desktop_token");
-    if (savedToken) {
-      tokenInput.value = savedToken;
+    // Load token from URL param, localStorage, or sessionStorage
+    const urlParams = new URLSearchParams(window.location.search);
+    const queryToken = urlParams.get("token");
+    if (queryToken) {
+      tokenInput.value = queryToken;
+      try {
+        localStorage.setItem("xworkmate_desktop_token", queryToken);
+      } catch (e) {}
+    } else {
+      let savedToken = null;
+      try {
+        savedToken = localStorage.getItem("xworkmate_desktop_token") || sessionStorage.getItem("xworkmate_desktop_token");
+      } catch (e) {}
+      if (savedToken) {
+        tokenInput.value = savedToken;
+      }
     }
     tokenInput.addEventListener("input", () => {
-      sessionStorage.setItem("xworkmate_desktop_token", tokenInput.value);
+      try {
+        localStorage.setItem("xworkmate_desktop_token", tokenInput.value);
+        sessionStorage.setItem("xworkmate_desktop_token", tokenInput.value);
+      } catch (e) {}
+    });
+    tokenInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        connect();
+      }
     });
 
     let toolbarHidden = false;
@@ -429,6 +450,14 @@
         key: e.key
       });
     });
+
+    // Auto-connect if token is present on initial load
+    if (tokenInput.value.trim().length > 0) {
+      window.addEventListener("DOMContentLoaded", () => connect());
+      if (document.readyState === "complete" || document.readyState === "interactive") {
+        connect();
+      }
+    }
   </script>
 </body>
 </html>
