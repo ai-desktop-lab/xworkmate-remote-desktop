@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,16 +48,30 @@ func NewWebRTCServer(injector *XdotoolInjector) (*WebRTCServer, error) {
 	}, nil
 }
 
+type WebRTCOptions struct {
+	UDPPortMin uint16
+	UDPPortMax uint16
+	NAT1To1IP  string
+}
+
 // InitPeerConnection sets up the Pion PeerConnection and local H.264 video track
 func (w *WebRTCServer) InitPeerConnection(iceServers []string) error {
+	return w.InitPeerConnectionWithOptions(iceServers, WebRTCOptions{})
+}
+
+// InitPeerConnectionWithOptions sets up the Pion PeerConnection with custom options
+func (w *WebRTCServer) InitPeerConnectionWithOptions(iceServers []string, opts WebRTCOptions) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	var webrtcIceServers []webrtc.ICEServer
 	for _, url := range iceServers {
-		webrtcIceServers = append(webrtcIceServers, webrtc.ICEServer{
-			URLs: []string{url},
-		})
+		url = strings.TrimSpace(url)
+		if url != "" {
+			webrtcIceServers = append(webrtcIceServers, webrtc.ICEServer{
+				URLs: []string{url},
+			})
+		}
 	}
 	if len(webrtcIceServers) == 0 {
 		// Default STUN server
@@ -69,7 +84,24 @@ func (w *WebRTCServer) InitPeerConnection(iceServers []string) error {
 		ICEServers: webrtcIceServers,
 	}
 
-	pc, err := webrtc.NewPeerConnection(config)
+	var pc *webrtc.PeerConnection
+	var err error
+
+	if (opts.UDPPortMin > 0 && opts.UDPPortMax >= opts.UDPPortMin) || opts.NAT1To1IP != "" {
+		settingEngine := webrtc.SettingEngine{}
+		if opts.UDPPortMin > 0 && opts.UDPPortMax >= opts.UDPPortMin {
+			if err := settingEngine.SetEphemeralUDPPortRange(opts.UDPPortMin, opts.UDPPortMax); err != nil {
+				return fmt.Errorf("failed to set ephemeral UDP port range: %w", err)
+			}
+		}
+		if opts.NAT1To1IP != "" {
+			settingEngine.SetNAT1To1IPs([]string{opts.NAT1To1IP}, webrtc.ICECandidateTypeHost)
+		}
+		api := webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine))
+		pc, err = api.NewPeerConnection(config)
+	} else {
+		pc, err = webrtc.NewPeerConnection(config)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to create WebRTC PeerConnection: %w", err)
 	}

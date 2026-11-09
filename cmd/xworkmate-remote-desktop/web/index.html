@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>XWorkmate WebRTC Remote Desktop</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #0f141c;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    #toolbar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 48px;
+      background: rgba(15, 23, 42, 0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 12px;
+      z-index: 100;
+      transition: transform 0.2s ease;
+    }
+    #toolbar.hidden {
+      transform: translateY(-100%);
+    }
+    #toggle-toolbar-btn {
+      position: absolute;
+      top: 48px;
+      right: 16px;
+      background: rgba(15, 23, 42, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #94a3b8;
+      border-radius: 0 0 6px 6px;
+      padding: 2px 10px;
+      font-size: 11px;
+      cursor: pointer;
+      z-index: 99;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 500;
+      background: #1e293b;
+      color: #94a3b8;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #64748b;
+    }
+    .status-badge.connected .status-dot { background: #10b981; }
+    .status-badge.connected { color: #34d399; }
+    .status-badge.connecting .status-dot { background: #f59e0b; }
+    .status-badge.connecting { color: #fbbf24; }
+    .status-badge.error .status-dot { background: #ef4444; }
+    .status-badge.error { color: #f87171; }
+
+    input[type="password"], input[type="text"] {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #f1f5f9;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+      width: 220px;
+    }
+    input:focus { border-color: #3b82f6; }
+    button {
+      background: #2563eb;
+      color: #ffffff;
+      border: none;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      transition: background 0.15s ease;
+    }
+    button:hover { background: #1d4ed8; }
+    button.secondary {
+      background: #334155;
+      color: #cbd5e1;
+    }
+    button.secondary:hover { background: #475569; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    #container {
+      position: absolute;
+      top: 48px;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #020617;
+      outline: none;
+    }
+    #container.full { top: 0; }
+    video {
+      max-width: 100%;
+      max-height: 100%;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      cursor: default;
+    }
+    #overlay-msg {
+      position: absolute;
+      padding: 16px 24px;
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid #334155;
+      border-radius: 8px;
+      color: #94a3b8;
+      font-size: 14px;
+      text-align: center;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <div class="status-badge" id="status-badge">
+      <span class="status-dot"></span>
+      <span id="status-text">Disconnected</span>
+    </div>
+    <input type="password" id="token-input" placeholder="Authorization Token" autocomplete="off" />
+    <button id="connect-btn">Connect</button>
+    <button id="disconnect-btn" class="secondary" disabled>Disconnect</button>
+    <div style="flex: 1;"></div>
+    <button id="fullscreen-btn" class="secondary">Fullscreen</button>
+  </div>
+  <button id="toggle-toolbar-btn">▲ Hide Bar</button>
+
+  <div id="container" tabindex="0">
+    <video id="remote-video" autoplay playsinline muted></video>
+    <div id="overlay-msg">Click "Connect" to start remote desktop stream.</div>
+  </div>
+
+  <script>
+    const PROTOCOL_VERSION = "1";
+    let pc = null;
+    let inputDc = null;
+    let moveDc = null;
+    let sessionId = null;
+    let seq = 0;
+
+    const statusBadge = document.getElementById("status-badge");
+    const statusText = document.getElementById("status-text");
+    const tokenInput = document.getElementById("token-input");
+    const connectBtn = document.getElementById("connect-btn");
+    const disconnectBtn = document.getElementById("disconnect-btn");
+    const fullscreenBtn = document.getElementById("fullscreen-btn");
+    const toggleToolbarBtn = document.getElementById("toggle-toolbar-btn");
+    const toolbar = document.getElementById("toolbar");
+    const container = document.getElementById("container");
+    const video = document.getElementById("remote-video");
+    const overlayMsg = document.getElementById("overlay-msg");
+
+    // Load token from URL hash (preferred for security: never sent to server logs),
+    // URL query param, localStorage, or sessionStorage
+    const urlParams = new URLSearchParams(window.location.search);
+    const hashParams = new URLSearchParams(window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash);
+    const incomingToken = hashParams.get("token") || urlParams.get("token");
+
+    if (incomingToken) {
+      tokenInput.value = incomingToken;
+      try {
+        localStorage.setItem("xworkmate_desktop_token", incomingToken);
+      } catch (e) {}
+      // Immediately scrub the token from URL bar and browser history to prevent leakage
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    } else {
+      let savedToken = null;
+      try {
+        savedToken = localStorage.getItem("xworkmate_desktop_token") || sessionStorage.getItem("xworkmate_desktop_token");
+      } catch (e) {}
+      if (savedToken) {
+        tokenInput.value = savedToken;
+      }
+    }
+    tokenInput.addEventListener("input", () => {
+      try {
+        localStorage.setItem("xworkmate_desktop_token", tokenInput.value);
+        sessionStorage.setItem("xworkmate_desktop_token", tokenInput.value);
+      } catch (e) {}
+    });
+    tokenInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        connect();
+      }
+    });
+
+    let toolbarHidden = false;
+    toggleToolbarBtn.addEventListener("click", () => {
+      toolbarHidden = !toolbarHidden;
+      if (toolbarHidden) {
+        toolbar.classList.add("hidden");
+        container.classList.add("full");
+        toggleToolbarBtn.textContent = "▼ Show Bar";
+      } else {
+        toolbar.classList.remove("hidden");
+        container.classList.remove("full");
+        toggleToolbarBtn.textContent = "▲ Hide Bar";
+      }
+    });
+
+    fullscreenBtn.addEventListener("click", () => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    });
+
+    function setStatus(state, msg) {
+      statusBadge.className = "status-badge " + state;
+      statusText.textContent = msg || state;
+      if (state === "connected") {
+        overlayMsg.style.display = "none";
+        connectBtn.disabled = true;
+        disconnectBtn.disabled = false;
+      } else if (state === "connecting") {
+        overlayMsg.style.display = "block";
+        overlayMsg.textContent = msg || "Establishing WebRTC connection...";
+        connectBtn.disabled = true;
+        disconnectBtn.disabled = false;
+      } else {
+        overlayMsg.style.display = "block";
+        overlayMsg.textContent = msg || "Disconnected. Click Connect to start stream.";
+        connectBtn.disabled = false;
+        disconnectBtn.disabled = true;
+      }
+    }
+
+    async function disconnect() {
+      if (sessionId) {
+        const token = tokenInput.value.trim();
+        try {
+          await fetch("/api/session/" + encodeURIComponent(sessionId), {
+            method: "DELETE",
+            headers: token ? { "Authorization": "Bearer " + token } : {}
+          });
+        } catch (e) {}
+        sessionId = null;
+      }
+      if (pc) {
+        pc.close();
+        pc = null;
+      }
+      inputDc = null;
+      moveDc = null;
+      video.srcObject = null;
+      setStatus("disconnected", "Disconnected");
+    }
+
+    async function connect() {
+      await disconnect();
+      setStatus("connecting", "Initializing PeerConnection...");
+
+      const token = tokenInput.value.trim();
+
+      pc = new RTCPeerConnection({
+        iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }]
+      });
+
+      pc.addTransceiver("video", { direction: "recvonly" });
+
+      inputDc = pc.createDataChannel("input", { ordered: true });
+      moveDc = pc.createDataChannel("input-move", { ordered: false, maxRetransmits: 0 });
+
+      inputDc.onopen = () => console.log("Input data channel open");
+      moveDc.onopen = () => console.log("Move data channel open");
+
+      pc.ontrack = (event) => {
+        if (event.streams && event.streams[0]) {
+          video.srcObject = event.streams[0];
+          setStatus("connected", "Connected");
+        }
+      };
+
+      pc.onconnectionstatechange = () => {
+        const s = pc.connectionState;
+        if (s === "connected") {
+          setStatus("connected", "Connected");
+        } else if (s === "failed" || s === "disconnected" || s === "closed") {
+          setStatus("error", "WebRTC " + s);
+        }
+      };
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      // Wait for complete ICE gathering
+      await new Promise((resolve) => {
+        if (pc.iceGatheringState === "complete") {
+          resolve();
+        } else {
+          const checkState = () => {
+            if (pc.iceGatheringState === "complete") {
+              pc.removeEventListener("icegatheringstatechange", checkState);
+              resolve();
+            }
+          };
+          pc.addEventListener("icegatheringstatechange", checkState);
+          setTimeout(resolve, 5000); // 5s timeout fallback
+        }
+      });
+
+      setStatus("connecting", "Negotiating SDP with server...");
+
+      const headers = { "Content-Type": "application/json" };
+      if (token) {
+        headers["Authorization"] = "Bearer " + token;
+      }
+
+      const payload = {
+        sdp: pc.localDescription.sdp
+      };
+      if (token) {
+        payload.token = token;
+      }
+
+      let resp;
+      try {
+        resp = await fetch("/api/session", {
+          method: "POST",
+          headers: headers,
+          body: JSON.stringify(payload)
+        });
+      } catch (err) {
+        setStatus("error", "Failed to reach server: " + err.message);
+        disconnect();
+        return;
+      }
+
+      if (!resp.ok) {
+        const text = await resp.text();
+        setStatus("error", "Server rejected session (" + resp.status + "): " + text);
+        disconnect();
+        return;
+      }
+
+      const answerData = await resp.json();
+      sessionId = answerData.session_id;
+
+      await pc.setRemoteDescription(new RTCSessionDescription({
+        type: "answer",
+        sdp: answerData.sdp
+      }));
+
+      setStatus("connecting", "Waiting for video stream...");
+      container.focus();
+    }
+
+    connectBtn.addEventListener("click", connect);
+    disconnectBtn.addEventListener("click", disconnect);
+    window.addEventListener("beforeunload", () => {
+      if (sessionId) {
+        const token = tokenInput.value.trim();
+        navigator.sendBeacon("/api/session/" + encodeURIComponent(sessionId), "");
+      }
+    });
+
+    // Input coordinate translation
+    function getNormalizedCoords(e) {
+      const rect = video.getBoundingClientRect();
+      const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+      return { x, y };
+    }
+
+    function sendInputEvent(channel, event) {
+      if (!channel || channel.readyState !== "open" || !sessionId) return;
+      event.protocolVersion = PROTOCOL_VERSION;
+      event.sessionId = sessionId;
+      event.sequence = seq++;
+      try {
+        channel.send(JSON.stringify(event));
+      } catch (err) {
+        console.error("Failed to send input event:", err);
+      }
+    }
+
+    video.addEventListener("mousemove", (e) => {
+      const { x, y } = getNormalizedCoords(e);
+      sendInputEvent(moveDc, {
+        type: "mouse_move",
+        x: x,
+        y: y
+      });
+    });
+
+    video.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      container.focus();
+      const { x, y } = getNormalizedCoords(e);
+      sendInputEvent(inputDc, {
+        type: "mouse_down",
+        x: x,
+        y: y,
+        button: e.button + 1
+      });
+    });
+
+    video.addEventListener("mouseup", (e) => {
+      e.preventDefault();
+      const { x, y } = getNormalizedCoords(e);
+      sendInputEvent(inputDc, {
+        type: "mouse_up",
+        x: x,
+        y: y,
+        button: e.button + 1
+      });
+    });
+
+    video.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      sendInputEvent(inputDc, {
+        type: "scroll",
+        button: e.deltaY < 0 ? 4 : 5
+      });
+    }, { passive: false });
+
+    video.addEventListener("contextmenu", (e) => e.preventDefault());
+
+    container.addEventListener("keydown", (e) => {
+      if (["Tab", "F5", "ContextMenu", "Alt", "Meta"].includes(e.key)) {
+        e.preventDefault();
+      }
+      sendInputEvent(inputDc, {
+        type: "key_down",
+        key: e.key
+      });
+    });
+
+    container.addEventListener("keyup", (e) => {
+      if (["Tab", "F5", "ContextMenu", "Alt", "Meta"].includes(e.key)) {
+        e.preventDefault();
+      }
+      sendInputEvent(inputDc, {
+        type: "key_up",
+        key: e.key
+      });
+    });
+
+    // Auto-connect if token is present on initial load
+    if (tokenInput.value.trim().length > 0) {
+      window.addEventListener("DOMContentLoaded", () => connect());
+      if (document.readyState === "complete" || document.readyState === "interactive") {
+        connect();
+      }
+    }
+  </script>
+</body>
+</html>
