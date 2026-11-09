@@ -175,14 +175,21 @@
     const video = document.getElementById("remote-video");
     const overlayMsg = document.getElementById("overlay-msg");
 
-    // Load token from URL param, localStorage, or sessionStorage
+    // Load token from URL hash (preferred for security: never sent to server logs),
+    // URL query param, localStorage, or sessionStorage
     const urlParams = new URLSearchParams(window.location.search);
-    const queryToken = urlParams.get("token");
-    if (queryToken) {
-      tokenInput.value = queryToken;
+    const hashParams = new URLSearchParams(window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash);
+    const incomingToken = hashParams.get("token") || urlParams.get("token");
+
+    if (incomingToken) {
+      tokenInput.value = incomingToken;
       try {
-        localStorage.setItem("xworkmate_desktop_token", queryToken);
+        localStorage.setItem("xworkmate_desktop_token", incomingToken);
       } catch (e) {}
+      // Immediately scrub the token from URL bar and browser history to prevent leakage
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
     } else {
       let savedToken = null;
       try {
@@ -328,12 +335,19 @@
         headers["Authorization"] = "Bearer " + token;
       }
 
+      const payload = {
+        sdp: pc.localDescription.sdp
+      };
+      if (token) {
+        payload.token = token;
+      }
+
       let resp;
       try {
         resp = await fetch("/api/session", {
           method: "POST",
           headers: headers,
-          body: JSON.stringify({ sdp: pc.localDescription.sdp })
+          body: JSON.stringify(payload)
         });
       } catch (err) {
         setStatus("error", "Failed to reach server: " + err.message);

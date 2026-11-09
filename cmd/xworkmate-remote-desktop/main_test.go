@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -80,19 +81,27 @@ func TestAuthMiddleware(t *testing.T) {
 	mux := srv.setupRoutes()
 
 	// Missing token on protected endpoint
-	req := httptest.NewRequest(http.MethodPost, "/api/session", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader(`{"sdp":"test"}`))
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401 Unauthorized, got %d", rr.Code)
 	}
 
-	// Invalid token
-	req = httptest.NewRequest(http.MethodPost, "/api/session", nil)
+	// Invalid token in header
+	req = httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader(`{"sdp":"test"}`))
 	req.Header.Set("Authorization", "Bearer wrong")
 	rr = httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401 Unauthorized for invalid token, got %d", rr.Code)
+	}
+
+	// Invalid token in body
+	req = httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader(`{"sdp":"test","token":"wrong"}`))
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 Unauthorized for invalid body token, got %d", rr.Code)
 	}
 }

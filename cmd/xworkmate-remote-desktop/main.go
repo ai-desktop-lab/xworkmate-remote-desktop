@@ -165,18 +165,27 @@ func NewServer(cfg Config) *Server {
 	}
 }
 
+func (s *Server) checkAuth(r *http.Request, bodyToken string) bool {
+	if s.cfg.Token == "" {
+		return true
+	}
+	authHeader := r.Header.Get("Authorization")
+	token := ""
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		token = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	}
+	if token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.Token)) == 1 {
+		return true
+	}
+	if bodyToken != "" && subtle.ConstantTimeCompare([]byte(bodyToken), []byte(s.cfg.Token)) == 1 {
+		return true
+	}
+	return false
+}
+
 func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.Token == "" {
-			next(w, r)
-			return
-		}
-		authHeader := r.Header.Get("Authorization")
-		token := ""
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			token = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-		}
-		if subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.Token)) != 1 {
+		if !s.checkAuth(r, "") {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -185,7 +194,8 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 type SessionRequest struct {
-	SDP string `json:"sdp"`
+	SDP   string `json:"sdp"`
+	Token string `json:"token,omitempty"`
 }
 
 type SessionResponse struct {
@@ -218,7 +228,21 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	var req SessionRequest
-	if err := json.Unmarshal(body, &req); err != nil || strings.TrimSpace(req.SDP) == "" {
+	if err := json.Unmarshal(body, &req); err != nil {
+		if !s.checkAuth(r, "") {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		http.Error(w, "Invalid SDP payload", http.StatusBadRequest)
+		return
+	}
+
+	if !s.checkAuth(r, req.Token) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if strings.TrimSpace(req.SDP) == "" {
 		http.Error(w, "Invalid SDP payload", http.StatusBadRequest)
 		return
 	}
@@ -312,7 +336,7 @@ func (s *Server) setupRoutes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/", s.handleIndex)
-	mux.HandleFunc("/api/session", s.authMiddleware(s.handleCreateSession))
+	mux.HandleFunc("/api/session", s.handleCreateSession)
 	mux.HandleFunc("/api/session/", s.authMiddleware(s.handleDeleteSession))
 	return mux
 }
