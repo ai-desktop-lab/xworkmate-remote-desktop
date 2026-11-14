@@ -145,7 +145,9 @@
       border: 1px solid #334155;
       border-radius: 12px;
       padding: 24px;
-      width: min(600px, calc(100vw - 32px));
+      width: min(720px, calc(100vw - 32px));
+      max-height: 88vh;
+      overflow-y: auto;
       box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
     }
     dialog#ai-agent-dialog::backdrop {
@@ -319,23 +321,34 @@
       <h2 id="ai-agent-dialog-title" style="font-size: 18px; font-weight: 600; color: #f8fafc;">🤖 AI Agent Control & MCP Hub</h2>
       <button id="ai-agent-close-btn" type="button" class="secondary" style="padding: 2px 8px; font-size: 12px;">✕</button>
     </div>
-    <p class="login-subtitle" style="margin-bottom: 14px;">
-      This desktop is fully operable by AI Agents (DeepSeek Harness, Antigravity, Claude Computer-Use, OSWorld) via atomic REST endpoints and MCP.
+    <p class="login-subtitle" style="margin-bottom: 12px;">
+      This desktop is fully operable by autonomous AI Agents (DeepSeek Harness, Antigravity, Claude Computer-Use, OSWorld) via atomic REST endpoints and MCP.
     </p>
+
+    <div style="background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(14, 165, 233, 0.35); border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <span style="font-size: 13px; font-weight: 600; color: #38bdf8;">📋 复制完整 AI Agent 提示词 (Copy AI System Prompt)</span>
+        <button id="copy-ai-prompt-btn" type="button" style="background: #0284c7; color: #ffffff; border: none; padding: 5px 14px; font-size: 12px; font-weight: 600; border-radius: 6px; cursor: pointer; transition: all 0.2s;">复制提示词</button>
+      </div>
+      <p style="font-size: 11px; color: #94a3b8; margin: 0 0 8px 0; line-height: 1.4;">
+        复制此段完整提示词发送给任意 AI（DeepSeek Harness、Antigravity、Claude 3.5/3.7、GPT-4o、UI-TARS），AI 即可获知所有接口、坐标规范与调用方式并直接开始操作。
+      </p>
+      <textarea id="ai-system-prompt-text" readonly style="width: 100%; height: 160px; background: #020617; border: 1px solid #1e293b; border-radius: 6px; color: #e2e8f0; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; padding: 8px; resize: vertical; box-sizing: border-box; line-height: 1.4;"></textarea>
+    </div>
 
     <div style="font-size: 13px; font-weight: 600; color: #cbd5e1; margin-top: 10px;">1. Model Context Protocol (MCP) Manifest</div>
     <div class="agent-snippet" id="agent-mcp-url">GET /api/v1/desktop/mcp/manifest</div>
 
     <div style="font-size: 13px; font-weight: 600; color: #cbd5e1; margin-top: 10px;">2. AI Perception: Live Screenshot</div>
-    <div class="agent-snippet">curl -H "Authorization: Bearer &lt;TOKEN&gt;" "https://desktop.svc.plus/api/v1/desktop/screenshot?raw=true" -o screen.png</div>
+    <div class="agent-snippet" id="agent-screenshot-url">curl -H "Authorization: Bearer &lt;TOKEN&gt;" "https://desktop.svc.plus/api/v1/desktop/screenshot?raw=true" -o screen.png</div>
 
     <div style="font-size: 13px; font-weight: 600; color: #cbd5e1; margin-top: 10px;">3. AI Actuation: Click, Type & Batch Actions</div>
-    <div class="agent-snippet">curl -X POST "https://desktop.svc.plus/api/v1/desktop/action" \
+    <div class="agent-snippet" id="agent-action-url">curl -X POST "https://desktop.svc.plus/api/v1/desktop/action" \
   -H "Authorization: Bearer &lt;TOKEN&gt;" -H "Content-Type: application/json" \
   -d '{"actions":[{"action":"click","x":640,"y":360},{"action":"type","text":"ls -la\n"}],"return_screenshot":true}'</div>
 
     <div style="font-size: 13px; font-weight: 600; color: #cbd5e1; margin-top: 10px;">4. OpenAPI 3.0 Contract</div>
-    <div class="agent-snippet">GET /api/v1/openapi.json</div>
+    <div class="agent-snippet" id="agent-openapi-url">GET /api/v1/openapi.json</div>
 
     <div class="dialog-actions" style="margin-top: 16px;">
       <button id="ai-agent-done-btn" type="button">Done</button>
@@ -859,18 +872,131 @@
       }
     });
 
+    function generateAgentSystemPrompt(origin, token) {
+      return `# Linux Desktop AI Agent System Prompt & Actuation Protocol
+
+You are an AI Agent with autonomous Computer-Use capabilities operating a remote Linux graphical desktop.
+Desktop Endpoint: ${origin}
+Authorization: Bearer ${token}
+
+## 1. Perception (Visual & State)
+Before acting, or whenever you need to check current screen state:
+- Live Full Screenshot (Raw PNG binary):
+  GET ${origin}/api/v1/desktop/screenshot?raw=true
+  Header: Authorization: Bearer ${token}
+- Base64 JSON Screenshot (for vision LLMs):
+  POST ${origin}/api/v1/desktop/screenshot
+  Body: {"format": "png", "base64": true, "scale": 1.0}
+- Display & Active Window Info:
+  GET ${origin}/api/v1/desktop/info
+  Returns screen resolution (e.g. 1280x720), active window title/geometry, mouse position, and capabilities.
+
+## 2. Actuation (Keyboard & Mouse Actions)
+Endpoint: POST ${origin}/api/v1/desktop/action
+Header: Content-Type: application/json, Authorization: Bearer ${token}
+
+### Coordinates Standard:
+You can specify coordinates using:
+- Normalized floats in [0.0 .. 1.0] (RECOMMENDED, e.g. {"x": 0.5, "y": 0.5} for screen center)
+- Or absolute physical pixels (e.g. {"x": 640, "y": 360})
+
+### Action Payloads:
+1. Click:
+   {"action": "click", "x": 0.5, "y": 0.5, "button": "left", "clicks": 1}
+   (button: "left" | "right" | "middle"; clicks: 1 | 2 | 3)
+2. Type text:
+   {"action": "type", "text": "echo 'Hello World'\\n"}
+3. Key combos & shortcuts:
+   {"action": "key", "keys": ["ctrl", "c"]} or {"action": "key", "key": "Return"}
+4. Drag & drop:
+   {"action": "drag", "x": 0.2, "y": 0.2, "to_x": 0.8, "to_y": 0.8}
+5. Mouse move:
+   {"action": "move", "x": 0.5, "y": 0.5}
+6. Scroll:
+   {"action": "scroll", "x": 0.5, "y": 0.5, "direction": "down", "amount": 3}
+7. Sleep / Wait:
+   {"action": "sleep", "duration_ms": 500}
+
+### Fast Feedback Loop (Batch Actions):
+To minimize network latency, submit multiple actions in one batch and request the resulting screenshot in the same HTTP response:
+POST ${origin}/api/v1/desktop/action
+{
+  "actions": [
+    {"action": "click", "x": 0.15, "y": 0.98},
+    {"action": "sleep", "duration_ms": 200},
+    {"action": "type", "text": "terminal\\n"}
+  ],
+  "return_screenshot": true
+}
+
+## 3. Window & Clipboard Management
+- List open windows: GET ${origin}/api/v1/desktop/windows
+- Focus window: POST ${origin}/api/v1/desktop/windows/focus  Body: {"title": "Terminal"}
+- Read clipboard: GET ${origin}/api/v1/desktop/clipboard
+- Write clipboard: POST ${origin}/api/v1/desktop/clipboard  Body: {"text": "Pasted text"}
+
+## 4. MCP Tools & API Schemas
+- Model Context Protocol (MCP) Manifest: ${origin}/api/v1/desktop/mcp/manifest
+- OpenAPI 3.0 Documentation: ${origin}/api/v1/openapi.json
+`;
+    }
+
     const aiAgentBtn = document.getElementById("ai-agent-btn");
     const aiAgentDialog = document.getElementById("ai-agent-dialog");
     const aiAgentCloseBtn = document.getElementById("ai-agent-close-btn");
     const aiAgentDoneBtn = document.getElementById("ai-agent-done-btn");
+    const copyAiPromptBtn = document.getElementById("copy-ai-prompt-btn");
+    const aiSystemPromptText = document.getElementById("ai-system-prompt-text");
+
     if (aiAgentBtn && aiAgentDialog) {
       aiAgentBtn.addEventListener("click", () => {
+        const origin = window.location.origin;
+        const token = (tokenInput && tokenInput.value.trim()) || "<YOUR_ACCESS_TOKEN>";
+        const promptText = generateAgentSystemPrompt(origin, token);
+        if (aiSystemPromptText) aiSystemPromptText.value = promptText;
+
+        const mcpEl = document.getElementById("agent-mcp-url");
+        if (mcpEl) mcpEl.textContent = `GET ${origin}/api/v1/desktop/mcp/manifest`;
+
+        const ssEl = document.getElementById("agent-screenshot-url");
+        if (ssEl) ssEl.textContent = `curl -H "Authorization: Bearer ${token}" "${origin}/api/v1/desktop/screenshot?raw=true" -o screen.png`;
+
+        const actEl = document.getElementById("agent-action-url");
+        if (actEl) actEl.textContent = `curl -X POST "${origin}/api/v1/desktop/action" \\\n  -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \\\n  -d '{"actions":[{"action":"click","x":640,"y":360},{"action":"type","text":"ls -la\\n"}],"return_screenshot":true}'`;
+
+        const openapiEl = document.getElementById("agent-openapi-url");
+        if (openapiEl) openapiEl.textContent = `GET ${origin}/api/v1/openapi.json`;
+
         if (typeof aiAgentDialog.showModal === "function") {
           aiAgentDialog.showModal();
         } else {
           aiAgentDialog.setAttribute("open", "");
         }
       });
+
+      if (copyAiPromptBtn && aiSystemPromptText) {
+        copyAiPromptBtn.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(aiSystemPromptText.value);
+            const orig = copyAiPromptBtn.textContent;
+            copyAiPromptBtn.textContent = "✓ 已复制到剪贴板！";
+            copyAiPromptBtn.style.background = "#16a34a";
+            setTimeout(() => {
+              copyAiPromptBtn.textContent = orig;
+              copyAiPromptBtn.style.background = "#0284c7";
+            }, 2000);
+          } catch (e) {
+            aiSystemPromptText.select();
+            document.execCommand("copy");
+            const orig = copyAiPromptBtn.textContent;
+            copyAiPromptBtn.textContent = "✓ 已复制！";
+            setTimeout(() => {
+              copyAiPromptBtn.textContent = orig;
+            }, 2000);
+          }
+        });
+      }
+
       const closeAgentDialog = () => {
         if (typeof aiAgentDialog.close === "function") {
           aiAgentDialog.close();
