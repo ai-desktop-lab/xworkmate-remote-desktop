@@ -23,13 +23,30 @@ func (s *Server) handleOAuthProviders(w http.ResponseWriter, r *http.Request) {
 // handleDeviceRegister handles DSH Remote device registration
 func (s *Server) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 	token := extractRequestToken(r, "")
-	if token == "" {
-		token = "dev-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	if len(token) < 16 {
+		token = "dev-" + strconv.FormatInt(time.Now().UnixNano(), 36) + "0123456789abcdef"
 	}
+	expTime := time.Now().Add(30 * 24 * time.Hour).UnixMilli()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"deviceToken":  token,
-		"refreshToken": token,
-		"expiresAt":    time.Now().Add(30 * 24 * time.Hour).UnixMilli(),
+		"accessToken":           token,
+		"accessTokenExpiresAt":  expTime,
+		"refreshToken":          token,
+		"refreshTokenExpiresAt": expTime,
+	})
+}
+
+// handleAuthRefresh handles token rotation for DSH Remote
+func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
+	token := extractRequestToken(r, "")
+	if len(token) < 16 {
+		token = "refresh-" + strconv.FormatInt(time.Now().UnixNano(), 36) + "0123456789abcdef"
+	}
+	expTime := time.Now().Add(30 * 24 * time.Hour).UnixMilli()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"accessToken":           token,
+		"accessTokenExpiresAt":  expTime,
+		"refreshToken":          token,
+		"refreshTokenExpiresAt": expTime,
 	})
 }
 
@@ -43,6 +60,7 @@ func (s *Server) handleDevicesList(w http.ResponseWriter, r *http.Request) {
 				"name":           fmt.Sprintf("XWorkmate WebRTC Desktop (%dx%d)", wWidth, wHeight),
 				"role":           "host",
 				"platform":       "linux",
+				"identityKey":    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 				"online":         true,
 				"membershipId":   "desktop-host",
 				"harnessVersion": "1.0.0",
@@ -77,6 +95,7 @@ func (s *Server) handleDeviceItem(w http.ResponseWriter, r *http.Request) {
 		"name":           fmt.Sprintf("XWorkmate WebRTC Desktop (%dx%d)", wWidth, wHeight),
 		"role":           "host",
 		"platform":       "linux",
+		"identityKey":    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		"online":         true,
 		"membershipId":   "desktop-host",
 		"harnessVersion": "1.0.0",

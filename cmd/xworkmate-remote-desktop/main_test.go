@@ -490,8 +490,8 @@ func TestV1AuthCompatibilityAndDeviceAPIs(t *testing.T) {
 	}
 	var regResp map[string]any
 	_ = json.Unmarshal(rr.Body.Bytes(), &regResp)
-	if regResp["deviceToken"] == nil {
-		t.Errorf("expected deviceToken in response")
+	if regResp["accessToken"] == nil || regResp["refreshToken"] == nil {
+		t.Errorf("expected accessToken and refreshToken in response, got %v", regResp)
 	}
 
 	// 4. Device list returns desktop host

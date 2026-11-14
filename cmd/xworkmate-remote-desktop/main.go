@@ -1053,6 +1053,8 @@ func (s *Server) setupRoutes() *http.ServeMux {
 	mux.HandleFunc("/api/v1/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("/api/auth/logout", s.handleAuthLogout)
 	mux.HandleFunc("/api/v1/auth/logout", s.handleAuthLogout)
+	mux.HandleFunc("/api/auth/refresh", s.handleAuthRefresh)
+	mux.HandleFunc("/api/v1/auth/refresh", s.handleAuthRefresh)
 	mux.HandleFunc("/api/auth/oauth/providers", s.handleOAuthProviders)
 	mux.HandleFunc("/api/v1/auth/oauth/providers", s.handleOAuthProviders)
 
