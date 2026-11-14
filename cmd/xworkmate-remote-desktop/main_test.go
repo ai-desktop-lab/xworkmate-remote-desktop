@@ -415,3 +415,186 @@ func TestAuthEndpointsStatusLoginLogout(t *testing.T) {
 		t.Errorf("expected empty host-only cookie domain for onwalk.net, got %q", got)
 	}
 }
+
+func TestAPINotFoundReturnsJSONNotHTML(t *testing.T) {
+	srv := NewServer(Config{Token: "test"})
+	mux := srv.setupRoutes()
+
+	// 1. Root and web routes serve HTML
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("expected 200 text/html for /, got %d %s", rr.Code, rr.Header().Get("Content-Type"))
+	}
+
+	// 2. Unmatched /api/ routes MUST return 404 JSON, NEVER HTML!
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/non_existent_route", strings.NewReader(`{}`))
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unmatched /api route, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("expected application/json for unmatched /api route, got %s", rr.Header().Get("Content-Type"))
+	}
+	var errResp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("failed to parse JSON 404 response: %v", err)
+	}
+	if errResp["error"] != "not_found" {
+		t.Errorf("expected error=not_found, got %v", errResp["error"])
+	}
+}
+
+func TestV1AuthCompatibilityAndDeviceAPIs(t *testing.T) {
+	srv := NewServer(Config{Token: "test-secret-token-123456"})
+	mux := srv.setupRoutes()
+
+	// 1. Login with static token via /api/v1/auth/login
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"email":"admin@svc.plus","password":"test-secret-token-123456"}`))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, loginReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 login with static token, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	var loginResp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &loginResp); err != nil {
+		t.Fatalf("failed to decode login response: %v", err)
+	}
+	if loginResp["token"] != "test-secret-token-123456" {
+		t.Errorf("expected token in login response, got %v", loginResp["token"])
+	}
+	if loginResp["expiresAt"] == nil {
+		t.Errorf("expected numeric expiresAt in login response")
+	}
+	if loginResp["isAdmin"] != true {
+		t.Errorf("expected isAdmin true, got %v", loginResp["isAdmin"])
+	}
+
+	// 2. OAuth providers endpoint returns empty list for standard auth
+	provReq := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/providers", nil)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, provReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for oauth providers, got %d", rr.Code)
+	}
+
+	// 3. Device register endpoint returns valid tokens
+	regReq := httptest.NewRequest(http.MethodPost, "/api/v1/devices/register", strings.NewReader(`{"v":1,"device":{"name":"dsh"}}`))
+	regReq.Header.Set("Authorization", "Bearer test-secret-token-123456")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, regReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for device registration, got %d", rr.Code)
+	}
+	var regResp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &regResp)
+	if regResp["deviceToken"] == nil {
+		t.Errorf("expected deviceToken in response")
+	}
+
+	// 4. Device list returns desktop host
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/devices", nil)
+	listReq.Header.Set("Authorization", "Bearer test-secret-token-123456")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, listReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for devices list, got %d", rr.Code)
+	}
+	var listResp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &listResp)
+	items, ok := listResp["items"].([]any)
+	if !ok || len(items) == 0 {
+		t.Fatalf("expected at least 1 device in items, got %v", listResp["items"])
+	}
+}
+
+func TestAIAgentDesktopEndpoints(t *testing.T) {
+	srv := NewServer(Config{Token: "agent-token-123"})
+	mux := srv.setupRoutes()
+
+	// 1. Desktop Info
+	infoReq := httptest.NewRequest(http.MethodGet, "/api/v1/desktop/info", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, infoReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for desktop info, got %d", rr.Code)
+	}
+	var info map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &info)
+	if info["width"] == nil || info["height"] == nil {
+		t.Errorf("expected width and height in info, got %v", info)
+	}
+
+	// 2. Desktop Screenshot (JSON)
+	shotReq := httptest.NewRequest(http.MethodGet, "/api/v1/desktop/screenshot", nil)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, shotReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for screenshot, got %d", rr.Code)
+	}
+	var shotResp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &shotResp)
+	if shotResp["base64"] == nil || shotResp["format"] != "png" {
+		t.Errorf("expected base64 png in screenshot response, got %v", shotResp)
+	}
+
+	// 3. Desktop Screenshot (Raw Image)
+	shotRawReq := httptest.NewRequest(http.MethodGet, "/api/v1/desktop/screenshot?raw=true", nil)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, shotRawReq)
+	if rr.Code != http.StatusOK || rr.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("expected 200 image/png, got %d %s", rr.Code, rr.Header().Get("Content-Type"))
+	}
+
+	// 4. Desktop Action (Single Sleep Action)
+	actReq := httptest.NewRequest(http.MethodPost, "/api/v1/desktop/action", strings.NewReader(`{"action":"sleep","duration_ms":10}`))
+	actReq.Header.Set("Authorization", "Bearer agent-token-123")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, actReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for action, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	var actResp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &actResp)
+	if actResp["success"] != true {
+		t.Errorf("expected action success=true, got %v", actResp)
+	}
+
+	// 5. Desktop Action (Batch with Return Screenshot)
+	batchReq := httptest.NewRequest(http.MethodPost, "/api/v1/desktop/action", strings.NewReader(`{
+		"actions": [
+			{"action":"sleep","duration_ms":5},
+			{"action":"sleep","duration_ms":5}
+		],
+		"return_screenshot": true
+	}`))
+	batchReq.Header.Set("Authorization", "Bearer agent-token-123")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, batchReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for batch action, got %d", rr.Code)
+	}
+	var batchResp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &batchResp)
+	if batchResp["success"] != true || batchResp["screenshot"] == nil {
+		t.Errorf("expected batch success with screenshot, got %v", batchResp)
+	}
+
+	// 6. MCP Manifest
+	mcpReq := httptest.NewRequest(http.MethodGet, "/api/v1/desktop/mcp/manifest", nil)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, mcpReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for MCP manifest, got %d", rr.Code)
+	}
+
+	// 7. OpenAPI Document
+	apiReq := httptest.NewRequest(http.MethodGet, "/api/v1/openapi.json", nil)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, apiReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for OpenAPI spec, got %d", rr.Code)
+	}
+}

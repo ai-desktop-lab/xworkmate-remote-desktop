@@ -232,6 +232,7 @@ type accountsSessionUser struct {
 type Server struct {
 	cfg        Config
 	service    *desktop.Service
+	agentCtrl  *desktop.AgentController
 	httpClient *http.Client
 	mu         sync.Mutex
 	activeSess string
@@ -243,6 +244,7 @@ func NewServer(cfg Config) *Server {
 	return &Server{
 		cfg:        cfg,
 		service:    desktop.GetService(),
+		agentCtrl:  desktop.NewAgentController(cfg.Display),
 		httpClient: &http.Client{Timeout: 5 * time.Second},
 		authCache:  make(map[string]authCacheEntry),
 	}
@@ -506,6 +508,10 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		writeJSONError(w, http.StatusNotFound, "not_found", fmt.Sprintf("API endpoint %s not found", r.URL.Path))
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(indexHTML)
@@ -802,10 +808,6 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if s.cfg.AccountsURL == "" {
-		writeJSONError(w, http.StatusNotFound, "accounts_not_configured", "Accounts authentication is not configured on this desktop host")
-		return
-	}
 
 	rawReq, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
 	if err != nil {
@@ -827,6 +829,37 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.Unmarshal(rawReq, &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid_json", "Invalid login JSON payload")
+		return
+	}
+
+	// Break-glass & standalone token check: if static token is configured and matches password or identifier
+	if s.cfg.Token != "" && (subtle.ConstantTimeCompare([]byte(req.Password), []byte(s.cfg.Token)) == 1 ||
+		(req.Password == "" && subtle.ConstantTimeCompare([]byte(req.Identifier), []byte(s.cfg.Token)) == 1)) {
+		id := &AuthIdentity{
+			Method: "static_token",
+			UserID: "admin",
+			Email:  firstNonEmpty(req.Email, req.Identifier, "admin@svc.plus"),
+			Name:   "Admin",
+			Role:   "admin",
+			Roles:  []string{"admin"},
+		}
+		s.cacheIdentity(s.cfg.Token, id)
+		s.setSessionCookies(w, r, s.cfg.Token, time.Now().Add(24*time.Hour), 86400)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"authenticated": true,
+			"token":         s.cfg.Token,
+			"expiresAt":     time.Now().Add(24 * time.Hour).UnixMilli(),
+			"expires_in":    86400,
+			"account":       id.Email,
+			"isAdmin":       true,
+			"method":        id.Method,
+			"user":          id,
+		})
+		return
+	}
+
+	if s.cfg.AccountsURL == "" {
+		writeJSONError(w, http.StatusNotFound, "accounts_not_configured", "Accounts authentication is not configured on this desktop host")
 		return
 	}
 
@@ -974,8 +1007,16 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	s.cacheIdentity(tok, id)
 	s.setSessionCookies(w, r, tok, expTime, maxAge)
 
+	isAdmin := slices.Contains(id.Roles, "admin") || strings.EqualFold(id.Role, "admin")
+	accountName := firstNonEmpty(id.Email, id.Name, id.UserID)
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated": true,
+		"token":         tok,
+		"expiresAt":     expTime.UnixMilli(),
+		"expires_in":    maxAge,
+		"account":       accountName,
+		"isAdmin":       isAdmin,
 		"method":        id.Method,
 		"user":          id,
 	})
@@ -1004,11 +1045,49 @@ func (s *Server) setupRoutes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/", s.handleIndex)
+
+	// Auth routes (supporting both /api/ and /api/v1/ prefixes)
 	mux.HandleFunc("/api/auth/status", s.handleAuthStatus)
+	mux.HandleFunc("/api/v1/auth/status", s.handleAuthStatus)
 	mux.HandleFunc("/api/auth/login", s.handleAuthLogin)
+	mux.HandleFunc("/api/v1/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("/api/auth/logout", s.handleAuthLogout)
+	mux.HandleFunc("/api/v1/auth/logout", s.handleAuthLogout)
+	mux.HandleFunc("/api/auth/oauth/providers", s.handleOAuthProviders)
+	mux.HandleFunc("/api/v1/auth/oauth/providers", s.handleOAuthProviders)
+
+	// WebRTC Session routes
 	mux.HandleFunc("/api/session", s.handleCreateSession)
+	mux.HandleFunc("/api/v1/session", s.handleCreateSession)
 	mux.HandleFunc("/api/session/", s.authMiddleware(s.handleDeleteSession))
+	mux.HandleFunc("/api/v1/session/", s.authMiddleware(s.handleDeleteSession))
+
+	// DSH Remote device registration & listing compatibility routes
+	mux.HandleFunc("/api/v1/devices/register", s.authMiddleware(s.handleDeviceRegister))
+	mux.HandleFunc("/api/v1/devices", s.authMiddleware(s.handleDevicesList))
+	mux.HandleFunc("/api/v1/devices/", s.authMiddleware(s.handleDeviceItem))
+
+	// AI Agent Desktop Actuation & Perception API
+	mux.HandleFunc("/api/desktop/info", s.handleDesktopInfo)
+	mux.HandleFunc("/api/v1/desktop/info", s.handleDesktopInfo)
+	mux.HandleFunc("/api/desktop/screenshot", s.handleDesktopScreenshot)
+	mux.HandleFunc("/api/v1/desktop/screenshot", s.handleDesktopScreenshot)
+	mux.HandleFunc("/api/desktop/action", s.authMiddleware(s.handleDesktopAction))
+	mux.HandleFunc("/api/v1/desktop/action", s.authMiddleware(s.handleDesktopAction))
+	mux.HandleFunc("/api/desktop/clipboard", s.authMiddleware(s.handleDesktopClipboard))
+	mux.HandleFunc("/api/v1/desktop/clipboard", s.authMiddleware(s.handleDesktopClipboard))
+	mux.HandleFunc("/api/desktop/windows", s.authMiddleware(s.handleDesktopWindows))
+	mux.HandleFunc("/api/v1/desktop/windows", s.authMiddleware(s.handleDesktopWindows))
+	mux.HandleFunc("/api/desktop/windows/focus", s.authMiddleware(s.handleDesktopWindowFocus))
+	mux.HandleFunc("/api/v1/desktop/windows/focus", s.authMiddleware(s.handleDesktopWindowFocus))
+	mux.HandleFunc("/api/desktop/launch", s.authMiddleware(s.handleDesktopLaunch))
+	mux.HandleFunc("/api/v1/desktop/launch", s.authMiddleware(s.handleDesktopLaunch))
+
+	// Agent MCP Discovery & OpenAPI Specification
+	mux.HandleFunc("/api/desktop/mcp/manifest", s.handleMCPManifest)
+	mux.HandleFunc("/api/v1/desktop/mcp/manifest", s.handleMCPManifest)
+	mux.HandleFunc("/api/v1/openapi.json", s.handleOpenAPI)
+
 	return mux
 }
 

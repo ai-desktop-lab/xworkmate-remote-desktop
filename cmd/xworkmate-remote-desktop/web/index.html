@@ -138,6 +138,33 @@
       background: rgba(2, 6, 23, 0.72);
       backdrop-filter: blur(4px);
     }
+    dialog#ai-agent-dialog {
+      margin: auto;
+      background: #0f172a;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 24px;
+      width: min(600px, calc(100vw - 32px));
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
+    }
+    dialog#ai-agent-dialog::backdrop {
+      background: rgba(2, 6, 23, 0.72);
+      backdrop-filter: blur(4px);
+    }
+    .agent-snippet {
+      background: #020617;
+      border: 1px solid #1e293b;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      color: #38bdf8;
+      overflow-x: auto;
+      margin: 6px 0 10px 0;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
     #login-form {
       display: flex;
       flex-direction: column;
@@ -248,6 +275,7 @@
     <button id="connect-btn" type="button">Connect</button>
     <button id="disconnect-btn" type="button" class="secondary" disabled>Disconnect</button>
     <div style="flex: 1;"></div>
+    <button id="ai-agent-btn" type="button" class="secondary" title="AI Agent Computer-Use & MCP API">🤖 AI Agent</button>
     <button id="fullscreen-btn" type="button" class="secondary">Fullscreen</button>
   </div>
   <button id="toggle-toolbar-btn" type="button">▲ Hide Bar</button>
@@ -284,6 +312,34 @@
         <a id="dialog-sso-link" class="btn secondary" target="_blank" rel="noopener" hidden>Console SSO</a>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="ai-agent-dialog" aria-labelledby="ai-agent-dialog-title">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+      <h2 id="ai-agent-dialog-title" style="font-size: 18px; font-weight: 600; color: #f8fafc;">🤖 AI Agent Control & MCP Hub</h2>
+      <button id="ai-agent-close-btn" type="button" class="secondary" style="padding: 2px 8px; font-size: 12px;">✕</button>
+    </div>
+    <p class="login-subtitle" style="margin-bottom: 14px;">
+      This desktop is fully operable by AI Agents (DeepSeek Harness, Antigravity, Claude Computer-Use, OSWorld) via atomic REST endpoints and MCP.
+    </p>
+
+    <div style="font-size: 13px; font-weight: 600; color: #cbd5e1; margin-top: 10px;">1. Model Context Protocol (MCP) Manifest</div>
+    <div class="agent-snippet" id="agent-mcp-url">GET /api/v1/desktop/mcp/manifest</div>
+
+    <div style="font-size: 13px; font-weight: 600; color: #cbd5e1; margin-top: 10px;">2. AI Perception: Live Screenshot</div>
+    <div class="agent-snippet">curl -H "Authorization: Bearer &lt;TOKEN&gt;" "https://desktop.svc.plus/api/v1/desktop/screenshot?raw=true" -o screen.png</div>
+
+    <div style="font-size: 13px; font-weight: 600; color: #cbd5e1; margin-top: 10px;">3. AI Actuation: Click, Type & Batch Actions</div>
+    <div class="agent-snippet">curl -X POST "https://desktop.svc.plus/api/v1/desktop/action" \
+  -H "Authorization: Bearer &lt;TOKEN&gt;" -H "Content-Type: application/json" \
+  -d '{"actions":[{"action":"click","x":640,"y":360},{"action":"type","text":"ls -la\n"}],"return_screenshot":true}'</div>
+
+    <div style="font-size: 13px; font-weight: 600; color: #cbd5e1; margin-top: 10px;">4. OpenAPI 3.0 Contract</div>
+    <div class="agent-snippet">GET /api/v1/openapi.json</div>
+
+    <div class="dialog-actions" style="margin-top: 16px;">
+      <button id="ai-agent-done-btn" type="button">Done</button>
+    </div>
   </dialog>
 
   <div id="container" tabindex="0">
@@ -802,6 +858,29 @@
         }
       }
     });
+
+    const aiAgentBtn = document.getElementById("ai-agent-btn");
+    const aiAgentDialog = document.getElementById("ai-agent-dialog");
+    const aiAgentCloseBtn = document.getElementById("ai-agent-close-btn");
+    const aiAgentDoneBtn = document.getElementById("ai-agent-done-btn");
+    if (aiAgentBtn && aiAgentDialog) {
+      aiAgentBtn.addEventListener("click", () => {
+        if (typeof aiAgentDialog.showModal === "function") {
+          aiAgentDialog.showModal();
+        } else {
+          aiAgentDialog.setAttribute("open", "");
+        }
+      });
+      const closeAgentDialog = () => {
+        if (typeof aiAgentDialog.close === "function") {
+          aiAgentDialog.close();
+        } else {
+          aiAgentDialog.removeAttribute("open");
+        }
+      };
+      if (aiAgentCloseBtn) aiAgentCloseBtn.addEventListener("click", closeAgentDialog);
+      if (aiAgentDoneBtn) aiAgentDoneBtn.addEventListener("click", closeAgentDialog);
+    }
 
     logoutBtn.addEventListener("click", async () => {
       await disconnect();

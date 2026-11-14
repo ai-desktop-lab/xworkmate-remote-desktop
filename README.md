@@ -49,12 +49,65 @@ Every flag has an environment variable; the flag wins when both are set.
 
 ## HTTP API
 
+All API endpoints support both `/api/...` and `/api/v1/...` prefixes. Unmatched API routes return standard JSON error envelopes (HTTP 404), never HTML.
+
+### Session & Streaming (WebRTC)
+
 | Endpoint | Auth | Description |
 | :--- | :--- | :--- |
 | `GET /healthz` | none | Liveness probe |
-| `GET /` | none | Embedded web client |
-| `POST /api/session` | token | Body `{"sdp": "...", "token": "..."}`; returns `{"session_id", "sdp"}` |
-| `DELETE /api/session/{id}` | token | Ends a session |
+| `GET /` | none | Embedded human web client (`web/index.html`) |
+| `POST /api/v1/session` | token/cookie | Body `{"sdp": "...", "token": "..."}`; returns `{"session_id", "sdp"}` |
+| `DELETE /api/v1/session/{id}` | token/cookie | Ends a session |
+
+### AI Agent Computer-Use & Actuation API
+
+| Endpoint | Method | Auth | Description |
+| :--- | :--- | :--- | :--- |
+| `/api/v1/desktop/info` | GET | public/token | Query display resolution, mouse coordinates, active window, and capabilities |
+| `/api/v1/desktop/screenshot` | GET | public/token | Capture live screenshot. Returns raw binary image (`?raw=true`) or JSON base64 |
+| `/api/v1/desktop/action` | POST | token/cookie | Execute atomic action (`click`, `move`, `type`, `key`, `drag`, `scroll`) or batch actions |
+| `/api/v1/desktop/clipboard` | GET/POST | token/cookie | Read or write X11 clipboard text |
+| `/api/v1/desktop/windows` | GET | token/cookie | List all visible windows, their geometries, PIDs, and titles |
+| `/api/v1/desktop/windows/focus` | POST | token/cookie | Focus window by ID or Title |
+| `/api/v1/desktop/launch` | POST | token/cookie | Launch application command in X11 environment |
+| `/api/v1/desktop/mcp/manifest` | GET | none | Model Context Protocol (MCP) tool schema definitions for autonomous agents |
+| `/api/v1/openapi.json` | GET | none | OpenAPI 3.0 specification for automated SDK/tool generation |
+
+### Unified Authentication & DSH Remote Compatibility
+
+| Endpoint | Method | Auth | Description |
+| :--- | :--- | :--- | :--- |
+| `/api/v1/auth/status` | GET | optional | Introspect session status and auth modes |
+| `/api/v1/auth/login` | POST | optional | SSO Accounts or static token login; returns DSH-compatible token payload |
+| `/api/v1/auth/logout` | POST | token/cookie | Invalidate session token and clear cookies |
+| `/api/v1/auth/oauth/providers` | GET | none | OAuth providers discovery |
+| `/api/v1/devices/register` | POST | token | DSH Remote client device registration |
+| `/api/v1/devices` | GET | token | Lists desktop host as an available remote device |
+
+## AI Agent Integration
+
+AI agents (Antigravity, DeepSeek Harness, Claude Computer Use, OSWorld) can directly control the desktop:
+
+```bash
+# 1. Take a screenshot
+curl -s -H "Authorization: Bearer <TOKEN>" \
+  "https://desktop.svc.plus/api/v1/desktop/screenshot?raw=true" -o screen.png
+
+# 2. Execute mouse click and keyboard input with immediate screenshot return
+curl -X POST "https://desktop.svc.plus/api/v1/desktop/action" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "actions": [
+      {"action": "click", "x": 0.5, "y": 0.5},
+      {"action": "type", "text": "ls -la\n"}
+    ],
+    "return_screenshot": true
+  }'
+```
+
+Both normalized coordinates `[0.0 .. 1.0]` and absolute pixel coordinates are supported. Human users can watch the AI Agent's actions in real-time over the WebRTC stream at `https://desktop.svc.plus/`.
 
 ## Authentication
 
