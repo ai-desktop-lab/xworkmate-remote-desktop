@@ -25,6 +25,15 @@ func TestParseFlagsAndEnvDefaults(t *testing.T) {
 	if cfg.Display != ":1" {
 		t.Errorf("expected default display :1, got %s", cfg.Display)
 	}
+	if cfg.Width != 1280 || cfg.Height != 720 || cfg.FPS != 30 {
+		t.Errorf("expected default capture 1280x720@30, got %dx%d@%d", cfg.Width, cfg.Height, cfg.FPS)
+	}
+	if cfg.UseGPU {
+		t.Error("expected default UseGPU=false (software x264enc)")
+	}
+	if cfg.CaptureTool != "gstreamer" {
+		t.Errorf("expected default capture-tool gstreamer, got %s", cfg.CaptureTool)
+	}
 }
 
 func TestParseFlagsAndEnvSecurityCheck(t *testing.T) {
@@ -514,8 +523,13 @@ func TestAIAgentDesktopEndpoints(t *testing.T) {
 	srv := NewServer(Config{Token: "agent-token-123"})
 	mux := srv.setupRoutes()
 
+	auth := func(req *http.Request) *http.Request {
+		req.Header.Set("Authorization", "Bearer agent-token-123")
+		return req
+	}
+
 	// 1. Desktop Info
-	infoReq := httptest.NewRequest(http.MethodGet, "/api/v1/desktop/info", nil)
+	infoReq := auth(httptest.NewRequest(http.MethodGet, "/api/v1/desktop/info", nil))
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, infoReq)
 	if rr.Code != http.StatusOK {
@@ -528,7 +542,7 @@ func TestAIAgentDesktopEndpoints(t *testing.T) {
 	}
 
 	// 2. Desktop Screenshot (JSON)
-	shotReq := httptest.NewRequest(http.MethodGet, "/api/v1/desktop/screenshot", nil)
+	shotReq := auth(httptest.NewRequest(http.MethodGet, "/api/v1/desktop/screenshot", nil))
 	rr = httptest.NewRecorder()
 	mux.ServeHTTP(rr, shotReq)
 	if rr.Code != http.StatusOK {
@@ -541,7 +555,7 @@ func TestAIAgentDesktopEndpoints(t *testing.T) {
 	}
 
 	// 3. Desktop Screenshot (Raw Image)
-	shotRawReq := httptest.NewRequest(http.MethodGet, "/api/v1/desktop/screenshot?raw=true", nil)
+	shotRawReq := auth(httptest.NewRequest(http.MethodGet, "/api/v1/desktop/screenshot?raw=true", nil))
 	rr = httptest.NewRecorder()
 	mux.ServeHTTP(rr, shotRawReq)
 	if rr.Code != http.StatusOK || rr.Header().Get("Content-Type") != "image/png" {
@@ -583,18 +597,127 @@ func TestAIAgentDesktopEndpoints(t *testing.T) {
 	}
 
 	// 6. MCP Manifest
-	mcpReq := httptest.NewRequest(http.MethodGet, "/api/v1/desktop/mcp/manifest", nil)
+	mcpReq := auth(httptest.NewRequest(http.MethodGet, "/api/v1/desktop/mcp/manifest", nil))
 	rr = httptest.NewRecorder()
 	mux.ServeHTTP(rr, mcpReq)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200 for MCP manifest, got %d", rr.Code)
 	}
 
-	// 7. OpenAPI Document
+	// 7. OpenAPI Document is public and documents bearerAuth plus missing paths
 	apiReq := httptest.NewRequest(http.MethodGet, "/api/v1/openapi.json", nil)
 	rr = httptest.NewRecorder()
 	mux.ServeHTTP(rr, apiReq)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200 for OpenAPI spec, got %d", rr.Code)
+	}
+	var spec map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &spec); err != nil {
+		t.Fatalf("openapi json: %v", err)
+	}
+	paths, _ := spec["paths"].(map[string]any)
+	for _, path := range []string{
+		"/api/v1/desktop/windows",
+		"/api/v1/desktop/windows/focus",
+		"/api/v1/desktop/launch",
+		"/api/v1/desktop/clipboard",
+		"/api/v1/desktop/action",
+		"/api/v1/session",
+	} {
+		if paths[path] == nil {
+			t.Errorf("OpenAPI missing path %s", path)
+		}
+	}
+	comps, _ := spec["components"].(map[string]any)
+	schemes, _ := comps["securitySchemes"].(map[string]any)
+	if schemes["bearerAuth"] == nil {
+		t.Error("OpenAPI missing components.securitySchemes.bearerAuth")
+	}
+}
+
+func TestAgentAPIsRequireBearerAndRejectCookieOnly(t *testing.T) {
+	srv := NewServer(Config{Token: "agent-token-123"})
+	mux := srv.setupRoutes()
+
+	paths := []struct {
+		method string
+		url    string
+		body   string
+	}{
+		{http.MethodGet, "/api/v1/desktop/info", ""},
+		{http.MethodGet, "/api/v1/desktop/screenshot?raw=true", ""},
+		{http.MethodGet, "/api/v1/desktop/mcp/manifest", ""},
+		{http.MethodGet, "/api/v1/desktop/windows", ""},
+		{http.MethodPost, "/api/v1/desktop/action", `{"action":"sleep","duration_ms":5}`},
+	}
+	for _, tc := range paths {
+		req := httptest.NewRequest(tc.method, tc.url, strings.NewReader(tc.body))
+		if tc.body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s without token: expected 401, got %d", tc.method, tc.url, rr.Code)
+		}
+
+		req = httptest.NewRequest(tc.method, tc.url, strings.NewReader(tc.body))
+		if tc.body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		req.AddCookie(&http.Cookie{Name: "xc_session", Value: "agent-token-123"})
+		rr = httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s cookie-only: expected 401, got %d", tc.method, tc.url, rr.Code)
+		}
+
+		req = httptest.NewRequest(tc.method, tc.url, strings.NewReader(tc.body))
+		if tc.body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		req.Header.Set("Authorization", "Bearer agent-token-123")
+		rr = httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("%s %s with Bearer: expected 200, got %d (%s)", tc.method, tc.url, rr.Code, rr.Body.String())
+		}
+	}
+
+	// Health and OpenAPI stay public
+	for _, url := range []string{"/healthz", "/api/v1/openapi.json"} {
+		req := httptest.NewRequest(http.MethodGet, url, nil)
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("%s should stay public, got %d", url, rr.Code)
+		}
+	}
+
+	// Human UI session routes still accept the SSO cookie
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(`{"sdp":""}`))
+	req.AddCookie(&http.Cookie{Name: "xc_session", Value: "agent-token-123"})
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("session cookie should pass auth and fail on empty SDP, got %d", rr.Code)
+	}
+
+	// auth refresh is no longer unauthenticated
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", nil)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("refresh without auth: expected 401, got %d", rr.Code)
+	}
+}
+
+func TestParseUseGPUAndCaptureToolFlags(t *testing.T) {
+	cfg, _, err := parseFlagsAndEnv([]string{"--use-gpu", "--capture-tool=ffmpeg", "--width=1920", "--height=1080", "--fps=60"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.UseGPU || cfg.CaptureTool != "ffmpeg" || cfg.Width != 1920 || cfg.Height != 1080 || cfg.FPS != 60 {
+		t.Fatalf("unexpected cfg: gpu=%v tool=%s %dx%d@%d", cfg.UseGPU, cfg.CaptureTool, cfg.Width, cfg.Height, cfg.FPS)
 	}
 }

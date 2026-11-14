@@ -19,29 +19,38 @@ import (
 
 // AgentAction represents an atomic action requested by an AI agent
 type AgentAction struct {
-	Type        string   `json:"type,omitempty"`        // "click", "move", "down", "up", "drag", "scroll", "key", "key_down", "key_up", "type", "hotkey", "sleep"
-	Action      string   `json:"action,omitempty"`      // alias for Type
-	X           *float64 `json:"x,omitempty"`           // absolute or normalized [0..1]
-	Y           *float64 `json:"y,omitempty"`           // absolute or normalized [0..1]
-	FromX       *float64 `json:"from_x,omitempty"`      // drag start
-	FromY       *float64 `json:"from_y,omitempty"`
-	ToX         *float64 `json:"to_x,omitempty"`        // drag end
-	ToY         *float64 `json:"to_y,omitempty"`
-	Button      string   `json:"button,omitempty"`      // "left", "middle", "right" or "1", "2", "3"
-	Count       int      `json:"count,omitempty"`       // repeat count for clicks
-	Text        string   `json:"text,omitempty"`        // text string for typing
-	Key         string   `json:"key,omitempty"`         // key symbol or combo (e.g., "Return", "ctrl+c")
-	Dx          int      `json:"dx,omitempty"`          // horizontal scroll
-	Dy          int      `json:"dy,omitempty"`          // vertical scroll
-	DurationMs  int      `json:"duration_ms,omitempty"` // pause/delay in ms
+	Type       string   `json:"type,omitempty"`   // "click", "move", "down", "up", "drag", "scroll", "key", "key_down", "key_up", "type", "hotkey", "sleep"
+	Action     string   `json:"action,omitempty"` // alias for Type
+	X          *float64 `json:"x,omitempty"`      // absolute or normalized [0..1]
+	Y          *float64 `json:"y,omitempty"`      // absolute or normalized [0..1]
+	FromX      *float64 `json:"from_x,omitempty"` // drag start
+	FromY      *float64 `json:"from_y,omitempty"`
+	ToX        *float64 `json:"to_x,omitempty"` // drag end
+	ToY        *float64 `json:"to_y,omitempty"`
+	Button     string   `json:"button,omitempty"`      // "left", "middle", "right" or "1", "2", "3"
+	Count      int      `json:"count,omitempty"`       // repeat count for clicks
+	Clicks     int      `json:"clicks,omitempty"`      // alias for Count
+	Text       string   `json:"text,omitempty"`        // text string for typing
+	Key        string   `json:"key,omitempty"`         // key symbol or combo (e.g., "Return", "ctrl+c")
+	Keys       []string `json:"keys,omitempty"`        // alias for Key, e.g. ["ctrl","c"]
+	Dx         int      `json:"dx,omitempty"`          // horizontal scroll
+	Dy         int      `json:"dy,omitempty"`          // vertical scroll
+	Direction  string   `json:"direction,omitempty"`   // scroll alias: "up","down","left","right"
+	Amount     int      `json:"amount,omitempty"`      // scroll alias for Count / |Dx|/|Dy|
+	DurationMs int      `json:"duration_ms,omitempty"` // pause/delay in ms
+	Normalized *bool    `json:"normalized,omitempty"`  // explicit coord interpretation
+	CoordMode  string   `json:"coord_mode,omitempty"`  // "normalized", "pixel", or "auto"
+	Mode       string   `json:"mode,omitempty"`        // type injection: "type", "paste", or "auto"
 }
 
 // ScreenshotOptions configures screen capture
 type ScreenshotOptions struct {
-	Format  string `json:"format,omitempty"`  // "png" (default) or "jpeg"
-	Quality int    `json:"quality,omitempty"` // for jpeg (1-100)
-	Width   int    `json:"width,omitempty"`
-	Height  int    `json:"height,omitempty"`
+	Format  string  `json:"format,omitempty"`  // "png" (default) or "jpeg"
+	Quality int     `json:"quality,omitempty"` // for jpeg (1-100)
+	Width   int     `json:"width,omitempty"`
+	Height  int     `json:"height,omitempty"`
+	Scale   float64 `json:"scale,omitempty"`  // optional resize factor, e.g. 0.5
+	Base64  *bool   `json:"base64,omitempty"` // advisory: JSON responses already include base64
 }
 
 // WindowInfo represents an open desktop window
@@ -143,8 +152,13 @@ func (ac *AgentController) GetGeometry() (int, int) {
 	return 1280, 720
 }
 
-// ResolveCoords converts normalized [0..1] or absolute pixel coordinates to absolute X, Y pixels
+// ResolveCoords converts auto-detected normalized [0..1] or absolute pixel coordinates to pixels.
 func (ac *AgentController) ResolveCoords(xVal, yVal *float64) (int, int, error) {
+	return ac.ResolveCoordsWithMode(xVal, yVal, "", nil)
+}
+
+// ResolveCoordsWithMode converts coordinates using coord_mode / normalized / auto rules.
+func (ac *AgentController) ResolveCoordsWithMode(xVal, yVal *float64, coordMode string, normalized *bool) (int, int, error) {
 	if xVal == nil || yVal == nil {
 		return 0, 0, errors.New("coordinates x and y are required")
 	}
@@ -152,8 +166,7 @@ func (ac *AgentController) ResolveCoords(xVal, yVal *float64) (int, int, error) 
 	x := *xVal
 	y := *yVal
 
-	// If both coordinates are within [0.0 .. 1.0] and at least one is non-zero, treat as normalized
-	if x <= 1.0 && y <= 1.0 && (x > 0 || y > 0) {
+	if CoordIsNormalized(x, y, coordMode, normalized) {
 		absX := int(math.Round(x * float64(w)))
 		absY := int(math.Round(y * float64(h)))
 		if absX >= w {
@@ -162,10 +175,28 @@ func (ac *AgentController) ResolveCoords(xVal, yVal *float64) (int, int, error) 
 		if absY >= h {
 			absY = h - 1
 		}
+		if absX < 0 {
+			absX = 0
+		}
+		if absY < 0 {
+			absY = 0
+		}
 		return absX, absY, nil
 	}
 
-	return int(math.Round(x)), int(math.Round(y)), nil
+	absX := int(math.Round(x))
+	absY := int(math.Round(y))
+	if absX < 0 {
+		absX = 0
+	}
+	if absY < 0 {
+		absY = 0
+	}
+	return absX, absY, nil
+}
+
+func (ac *AgentController) resolveActionCoords(action AgentAction, xVal, yVal *float64) (int, int, error) {
+	return ac.ResolveCoordsWithMode(xVal, yVal, action.CoordMode, action.Normalized)
 }
 
 // GetDisplayInfo queries current display resolution, mouse location, active window, and capabilities
@@ -422,12 +453,23 @@ func (ac *AgentController) CaptureScreenshot(ctx context.Context, opts Screensho
 	}
 
 	w, h := ac.GetGeometry()
+	applyScale := func(data []byte, fmtName string) ([]byte, string) {
+		if opts.Scale <= 0 || opts.Scale == 1 {
+			return data, fmtName
+		}
+		resized, outFmt, err := resizeImageBytes(data, fmtName, opts.Scale)
+		if err != nil || len(resized) == 0 {
+			return data, fmtName
+		}
+		return resized, outFmt
+	}
 
 	// Strategy 1: ImageMagick 'import'
 	importCmd := exec.CommandContext(ctx, "import", "-window", "root", fmt.Sprintf("%s:-", format))
 	importCmd.Env = desktopCommandEnv(ac.display)
 	out, err := importCmd.Output()
 	if err == nil && len(out) > 0 {
+		out, format = applyScale(out, format)
 		return out, format, nil
 	}
 
@@ -437,6 +479,7 @@ func (ac *AgentController) CaptureScreenshot(ctx context.Context, opts Screensho
 		scrotCmd.Env = desktopCommandEnv(ac.display)
 		scrotOut, scrotErr := scrotCmd.Output()
 		if scrotErr == nil && len(scrotOut) > 0 {
+			scrotOut, format = applyScale(scrotOut, format)
 			return scrotOut, format, nil
 		}
 	}
@@ -457,6 +500,7 @@ func (ac *AgentController) CaptureScreenshot(ctx context.Context, opts Screensho
 	ffmpegCmd.Env = desktopCommandEnv(ac.display)
 	ffmpegOut, ffmpegErr := ffmpegCmd.Output()
 	if ffmpegErr == nil && len(ffmpegOut) > 0 {
+		ffmpegOut, format = applyScale(ffmpegOut, format)
 		return ffmpegOut, format, nil
 	}
 
@@ -472,7 +516,8 @@ func (ac *AgentController) CaptureScreenshot(ctx context.Context, opts Screensho
 	gstCmd.Env = desktopCommandEnv(ac.display)
 	gstOut, gstErr := gstCmd.Output()
 	if gstErr == nil && len(gstOut) > 0 {
-		return gstOut, "png", nil
+		gstOut, format = applyScale(gstOut, "png")
+		return gstOut, format, nil
 	}
 
 	// Fallback for headless environments or unit tests: generate a synthetic image
@@ -489,7 +534,8 @@ func (ac *AgentController) CaptureScreenshot(ctx context.Context, opts Screensho
 		_ = png.Encode(&buf, img)
 		format = "png"
 	}
-	return buf.Bytes(), format, nil
+	scaled, format := applyScale(buf.Bytes(), format)
+	return scaled, format, nil
 }
 
 func firstNonEmpty(values ...string) string {
@@ -504,6 +550,7 @@ func firstNonEmpty(values ...string) string {
 // ExecuteAction executes a single agent action
 func (ac *AgentController) ExecuteAction(ctx context.Context, action AgentAction) (*ActionResult, error) {
 	start := time.Now()
+	action.ApplyActionAliases()
 	actType := strings.ToLower(firstNonEmpty(action.Type, action.Action))
 	if actType == "" {
 		return nil, errors.New("action type is required")
@@ -514,7 +561,7 @@ func (ac *AgentController) ExecuteAction(ctx context.Context, action AgentAction
 
 	switch actType {
 	case "click", "mouse_click":
-		x, y, err := ac.ResolveCoords(action.X, action.Y)
+		x, y, err := ac.resolveActionCoords(action, action.X, action.Y)
 		if err != nil {
 			// Click at current position if no coords provided
 			btn := ac.mapButton(action.Button)
@@ -535,7 +582,7 @@ func (ac *AgentController) ExecuteAction(ctx context.Context, action AgentAction
 		}
 
 	case "double_click":
-		x, y, err := ac.ResolveCoords(action.X, action.Y)
+		x, y, err := ac.resolveActionCoords(action, action.X, action.Y)
 		btn := ac.mapButton(action.Button)
 		if err != nil {
 			execErr = ac.runXdotool(ctx, fmt.Sprintf("click --repeat 2 --delay 100 %d", btn))
@@ -546,7 +593,7 @@ func (ac *AgentController) ExecuteAction(ctx context.Context, action AgentAction
 		}
 
 	case "triple_click":
-		x, y, err := ac.ResolveCoords(action.X, action.Y)
+		x, y, err := ac.resolveActionCoords(action, action.X, action.Y)
 		btn := ac.mapButton(action.Button)
 		if err != nil {
 			execErr = ac.runXdotool(ctx, fmt.Sprintf("click --repeat 3 --delay 100 %d", btn))
@@ -556,7 +603,7 @@ func (ac *AgentController) ExecuteAction(ctx context.Context, action AgentAction
 		msg = fmt.Sprintf("Triple clicked button %d", btn)
 
 	case "right_click":
-		x, y, err := ac.ResolveCoords(action.X, action.Y)
+		x, y, err := ac.resolveActionCoords(action, action.X, action.Y)
 		if err != nil {
 			execErr = ac.runXdotool(ctx, "click 3")
 		} else {
@@ -565,7 +612,7 @@ func (ac *AgentController) ExecuteAction(ctx context.Context, action AgentAction
 		msg = "Right clicked"
 
 	case "middle_click":
-		x, y, err := ac.ResolveCoords(action.X, action.Y)
+		x, y, err := ac.resolveActionCoords(action, action.X, action.Y)
 		if err != nil {
 			execErr = ac.runXdotool(ctx, "click 2")
 		} else {
@@ -574,7 +621,7 @@ func (ac *AgentController) ExecuteAction(ctx context.Context, action AgentAction
 		msg = "Middle clicked"
 
 	case "move", "mouse_move":
-		x, y, err := ac.ResolveCoords(action.X, action.Y)
+		x, y, err := ac.resolveActionCoords(action, action.X, action.Y)
 		if err != nil {
 			return nil, err
 		}
@@ -592,8 +639,8 @@ func (ac *AgentController) ExecuteAction(ctx context.Context, action AgentAction
 		msg = fmt.Sprintf("Mouse up button %d", btn)
 
 	case "drag", "mouse_drag":
-		fromX, fromY, errFrom := ac.ResolveCoords(action.FromX, action.FromY)
-		toX, toY, errTo := ac.ResolveCoords(action.ToX, action.ToY)
+		fromX, fromY, errFrom := ac.resolveActionCoords(action, action.FromX, action.FromY)
+		toX, toY, errTo := ac.resolveActionCoords(action, action.ToX, action.ToY)
 		if errFrom != nil || errTo != nil {
 			return nil, fmt.Errorf("drag requires valid from_x, from_y and to_x, to_y: %v, %v", errFrom, errTo)
 		}
@@ -605,12 +652,12 @@ func (ac *AgentController) ExecuteAction(ctx context.Context, action AgentAction
 	case "scroll":
 		// Handle coordinates if specified
 		if action.X != nil && action.Y != nil {
-			x, y, err := ac.ResolveCoords(action.X, action.Y)
+			x, y, err := ac.resolveActionCoords(action, action.X, action.Y)
 			if err == nil {
 				_ = ac.runXdotool(ctx, fmt.Sprintf("mousemove %d %d", x, y))
 			}
 		}
-		// button 4 is up, 5 is down
+		// button 4 is up, 5 is down, 6 left, 7 right
 		var btn int
 		var count int
 		if action.Dy < 0 {
@@ -619,8 +666,20 @@ func (ac *AgentController) ExecuteAction(ctx context.Context, action AgentAction
 		} else if action.Dy > 0 {
 			btn = 5
 			count = action.Dy
+		} else if action.Dx < 0 {
+			btn = 6
+			count = -action.Dx
+		} else if action.Dx > 0 {
+			btn = 7
+			count = action.Dx
 		} else if strings.EqualFold(action.Button, "up") || action.Button == "4" {
 			btn = 4
+			count = 1
+		} else if strings.EqualFold(action.Button, "left") || action.Button == "6" {
+			btn = 6
+			count = 1
+		} else if strings.EqualFold(action.Button, "right") || action.Button == "7" {
+			btn = 7
 			count = 1
 		} else {
 			btn = 5
@@ -628,6 +687,9 @@ func (ac *AgentController) ExecuteAction(ctx context.Context, action AgentAction
 		}
 		if action.Count > 0 {
 			count = action.Count
+		}
+		if count <= 0 {
+			count = 1
 		}
 		execErr = ac.runXdotool(ctx, fmt.Sprintf("click --repeat %d %d", count, btn))
 		msg = fmt.Sprintf("Scrolled button %d (%d times)", btn, count)
@@ -661,11 +723,21 @@ func (ac *AgentController) ExecuteAction(ctx context.Context, action AgentAction
 		if text == "" {
 			return nil, errors.New("text is required")
 		}
-		// xdotool type --delay 12 -- "text"
-		cmd := exec.CommandContext(ctx, "xdotool", "type", "--delay", "12", "--", text)
-		cmd.Env = desktopCommandEnv(ac.display)
-		execErr = cmd.Run()
-		msg = fmt.Sprintf("Typed text (%d runes)", len([]rune(text)))
+		if ShouldPasteText(text, action.Mode) {
+			if err := ac.SetClipboard(ctx, text); err != nil {
+				execErr = fmt.Errorf("clipboard paste failed: %w", err)
+				msg = execErr.Error()
+			} else {
+				execErr = ac.runXdotool(ctx, "key ctrl+v")
+				msg = fmt.Sprintf("Pasted text via clipboard (%d runes)", len([]rune(text)))
+			}
+		} else {
+			// xdotool type --delay 12 -- "text" (short ASCII default)
+			cmd := exec.CommandContext(ctx, "xdotool", "type", "--delay", "12", "--", text)
+			cmd.Env = desktopCommandEnv(ac.display)
+			execErr = cmd.Run()
+			msg = fmt.Sprintf("Typed text (%d runes)", len([]rune(text)))
+		}
 
 	case "sleep", "wait":
 		ms := action.DurationMs
@@ -822,10 +894,46 @@ func sanitizeKey(key string) string {
 	}
 }
 
-// GenerateMCPManifest returns tool definitions formatted for Model Context Protocol agents
+// GenerateMCPManifest returns an HTTP JSON tool catalog inspired by MCP tool
+// schemas. It is not a full MCP JSON-RPC or SSE transport; clients should call
+// the REST API with an Authorization Bearer token.
 func GenerateMCPManifest(serverBaseURL string) map[string]any {
+	actionProperties := map[string]any{
+		"action": map[string]any{
+			"type":        "string",
+			"enum":        []string{"click", "double_click", "right_click", "move", "mouse_down", "mouse_up", "drag", "scroll", "key", "type", "sleep"},
+			"description": "Action type to perform",
+		},
+		"x": map[string]any{
+			"type":        "number",
+			"description": "X coordinate: non-integer values in [0,1] are normalized (e.g. 0.5); integers such as 0 or 1 are pixels unless coord_mode/normalized is set",
+		},
+		"y": map[string]any{
+			"type":        "number",
+			"description": "Y coordinate (same rules as x)",
+		},
+		"from_x":      map[string]any{"type": "number", "description": "Drag start X (preferred)"},
+		"from_y":      map[string]any{"type": "number", "description": "Drag start Y (preferred)"},
+		"to_x":        map[string]any{"type": "number", "description": "Drag end X"},
+		"to_y":        map[string]any{"type": "number", "description": "Drag end Y"},
+		"button":      map[string]any{"type": "string", "enum": []string{"left", "middle", "right"}, "description": "Mouse button"},
+		"count":       map[string]any{"type": "integer", "description": "Click or scroll repeat count"},
+		"clicks":      map[string]any{"type": "integer", "description": "Alias for count"},
+		"text":        map[string]any{"type": "string", "description": "Text to type or paste"},
+		"key":         map[string]any{"type": "string", "description": "Key or hotkey combo (e.g. Return, ctrl+c)"},
+		"keys":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Alias for key, e.g. [\"ctrl\",\"c\"]"},
+		"direction":   map[string]any{"type": "string", "enum": []string{"up", "down", "left", "right"}, "description": "Scroll direction alias"},
+		"amount":      map[string]any{"type": "integer", "description": "Scroll repeat alias for count"},
+		"duration_ms": map[string]any{"type": "integer", "description": "Sleep duration in milliseconds"},
+		"normalized":  map[string]any{"type": "boolean", "description": "Explicit coordinate mode; overrides auto detection"},
+		"coord_mode":  map[string]any{"type": "string", "enum": []string{"auto", "normalized", "pixel"}, "description": "Coordinate interpretation"},
+		"mode":        map[string]any{"type": "string", "enum": []string{"auto", "type", "paste"}, "description": "For type: short ASCII uses xdotool type; paste/auto-long/non-ASCII uses clipboard + ctrl+v"},
+	}
+
 	return map[string]any{
 		"protocolVersion": "2024-11-05",
+		"transport":       "http+json catalog (not a full MCP JSON-RPC/SSE server)",
+		"auth":            "Authorization: Bearer <token> is required. Session cookies are not accepted on this endpoint.",
 		"serverInfo": map[string]string{
 			"name":    "xworkmate-remote-desktop",
 			"version": "1.0.0",
@@ -833,96 +941,71 @@ func GenerateMCPManifest(serverBaseURL string) map[string]any {
 		"tools": []map[string]any{
 			{
 				"name":        "desktop_screenshot",
-				"description": "Capture a live screenshot of the remote desktop display. Returns base64 encoded PNG and dimensions.",
+				"description": "Capture a live screenshot of the remote desktop display. Returns base64 encoded PNG and dimensions. Requires Bearer token.",
 				"inputSchema": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"format": map[string]any{
-							"type":        "string",
-							"enum":        []string{"png", "jpeg"},
-							"description": "Image format to encode",
-						},
+						"format": map[string]any{"type": "string", "enum": []string{"png", "jpeg"}, "description": "Image format to encode"},
+						"scale":  map[string]any{"type": "number", "description": "Optional resize factor, e.g. 0.5"},
+						"raw":    map[string]any{"type": "boolean", "description": "If true, request a raw image body instead of JSON"},
 					},
 				},
 			},
 			{
+				"name":        "desktop_info",
+				"description": "Get display geometry, mouse position, active window, and supported actions. Requires Bearer token.",
+				"inputSchema": map[string]any{"type": "object"},
+			},
+			{
 				"name":        "desktop_action",
-				"description": "Execute a single mouse or keyboard action on the remote desktop display.",
+				"description": "Execute a single mouse or keyboard action on the remote desktop display. Requires Bearer token.",
 				"inputSchema": map[string]any{
-					"type": "object",
-					"required": []string{
-						"action",
-					},
-					"properties": map[string]any{
-						"action": map[string]any{
-							"type":        "string",
-							"enum":        []string{"click", "double_click", "right_click", "move", "drag", "scroll", "key", "type", "sleep"},
-							"description": "Action type to perform",
-						},
-						"x": map[string]any{
-							"type":        "number",
-							"description": "X coordinate: either normalized [0.0..1.0] or absolute pixels",
-						},
-						"y": map[string]any{
-							"type":        "number",
-							"description": "Y coordinate: either normalized [0.0..1.0] or absolute pixels",
-						},
-						"button": map[string]any{
-							"type":        "string",
-							"enum":        []string{"left", "middle", "right"},
-							"description": "Mouse button",
-						},
-						"text": map[string]any{
-							"type":        "string",
-							"description": "Text to type (for type action)",
-						},
-						"key": map[string]any{
-							"type":        "string",
-							"description": "Key or hotkey combo (e.g. 'Return', 'ctrl+c', 'alt+Tab')",
-						},
-					},
+					"type":       "object",
+					"required":   []string{"action"},
+					"properties": actionProperties,
 				},
 			},
 			{
 				"name":        "desktop_batch_actions",
-				"description": "Execute a sequence of mouse and keyboard actions and optionally return the resulting screenshot.",
+				"description": "Execute a sequence of actions and optionally return the resulting screenshot. Requires Bearer token.",
 				"inputSchema": map[string]any{
-					"type": "object",
-					"required": []string{
-						"actions",
-					},
+					"type":     "object",
+					"required": []string{"actions"},
 					"properties": map[string]any{
 						"actions": map[string]any{
-							"type": "array",
-							"items": map[string]any{
-								"type": "object",
-							},
+							"type":  "array",
+							"items": map[string]any{"type": "object", "properties": actionProperties},
 						},
-						"return_screenshot": map[string]any{
-							"type":        "boolean",
-							"description": "Whether to return the final screenshot directly in the response",
-						},
+						"return_screenshot": map[string]any{"type": "boolean", "description": "Return the final screenshot in the same response"},
+						"format":            map[string]any{"type": "string", "enum": []string{"png", "jpeg"}},
 					},
 				},
 			},
 			{
 				"name":        "desktop_clipboard",
-				"description": "Get or set the remote desktop clipboard text.",
+				"description": "Get or set the remote desktop clipboard text. Requires Bearer token. Prefer this (or type with mode=paste) for long or non-ASCII text instead of character-by-character typing.",
 				"inputSchema": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"text": map[string]any{
-							"type":        "string",
-							"description": "Text to write to clipboard (omit to read)",
-						},
+						"text": map[string]any{"type": "string", "description": "Text to write to clipboard (omit to read)"},
 					},
 				},
 			},
 			{
 				"name":        "desktop_list_windows",
-				"description": "List visible windows with their titles and process IDs on the remote desktop.",
+				"description": "List visible windows with titles, geometry, and process IDs. Requires Bearer token.",
+				"inputSchema": map[string]any{"type": "object"},
+			},
+			{
+				"name":        "desktop_focus_window",
+				"description": "Focus a window by id or title. Requires Bearer token.",
 				"inputSchema": map[string]any{
 					"type": "object",
+					"properties": map[string]any{
+						"title":       map[string]any{"type": "string"},
+						"id":          map[string]any{"type": "string"},
+						"id_or_title": map[string]any{"type": "string"},
+					},
 				},
 			},
 		},

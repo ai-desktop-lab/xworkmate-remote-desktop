@@ -57,6 +57,8 @@ type Config struct {
 	Height        int
 	FPS           int
 	Bitrate       int
+	UseGPU        bool
+	CaptureTool   string
 }
 
 func getEnv(key, fallback string) string {
@@ -100,6 +102,17 @@ func parseDuration(s string, fallback time.Duration) time.Duration {
 	return d
 }
 
+func parseBool(s string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
+}
+
 func parseCSV(s string, lower bool) []string {
 	var out []string
 	for _, item := range strings.Split(s, ",") {
@@ -136,6 +149,8 @@ func parseFlagsAndEnv(args []string) (Config, bool, error) {
 		heightFlag        = fs.Int("height", parseInt(os.Getenv("XRD_HEIGHT"), 720), "Capture frame height")
 		fpsFlag           = fs.Int("fps", parseInt(os.Getenv("XRD_FPS"), 30), "Capture frames per second")
 		bitrateFlag       = fs.Int("bitrate", parseInt(os.Getenv("XRD_BITRATE"), 2000), "Video bitrate in kbps")
+		useGPUFlag        = fs.Bool("use-gpu", parseBool(os.Getenv("XRD_USE_GPU"), false), "Use NVENC/nvh264enc when available (default: software x264enc)")
+		captureToolFlag   = fs.String("capture-tool", getEnv("XRD_CAPTURE_TOOL", "gstreamer"), "Capture pipeline: gstreamer, ffmpeg, or auto")
 		versionFlag       = fs.Bool("version", false, "Print version and exit")
 	)
 
@@ -165,6 +180,8 @@ func parseFlagsAndEnv(args []string) (Config, bool, error) {
 		Height:        *heightFlag,
 		FPS:           *fpsFlag,
 		Bitrate:       *bitrateFlag,
+		UseGPU:        *useGPUFlag,
+		CaptureTool:   strings.TrimSpace(*captureToolFlag),
 	}
 
 	if cfg.AccountsURL != "" {
@@ -492,6 +509,45 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+func extractBearerToken(r *http.Request) string {
+	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+	if len(authHeader) > len("Bearer ") && strings.EqualFold(authHeader[:len("Bearer ")], "Bearer ") {
+		return strings.TrimSpace(authHeader[len("Bearer "):])
+	}
+	return ""
+}
+
+// authenticateAPIRequest accepts only an Authorization Bearer token.
+// Session cookies are reserved for the human web UI and are not sufficient
+// for agent/desktop APIs.
+func (s *Server) authenticateAPIRequest(r *http.Request) (*AuthIdentity, int, error) {
+	if s.cfg.Token == "" && s.cfg.AccountsURL == "" {
+		return &AuthIdentity{Method: "none"}, http.StatusOK, nil
+	}
+	token := extractBearerToken(r)
+	if token == "" {
+		return nil, http.StatusUnauthorized, errors.New("bearer token required")
+	}
+	if s.cfg.Token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.Token)) == 1 {
+		return &AuthIdentity{Method: "static_token"}, http.StatusOK, nil
+	}
+	if s.cfg.AccountsURL != "" {
+		return s.introspectAccountsSession(r.Context(), token)
+	}
+	return nil, http.StatusUnauthorized, errors.New("invalid authorization token")
+}
+
+func (s *Server) apiAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		_, status, err := s.authenticateAPIRequest(r)
+		if err != nil {
+			http.Error(w, http.StatusText(status), status)
+			return
+		}
+		next(w, r)
+	}
+}
+
 type SessionRequest struct {
 	SDP   string `json:"sdp"`
 	Token string `json:"token,omitempty"`
@@ -560,6 +616,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	s.activeSess = newSessionID
 	s.mu.Unlock()
 
+	toolType := s.cfg.CaptureTool
+	if toolType == "" {
+		toolType = "gstreamer"
+	}
 	pipelineCfg := desktop.PipelineConfig{
 		Display:  s.cfg.Display,
 		Port:     s.cfg.RTPPort,
@@ -567,7 +627,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Height:   s.cfg.Height,
 		FPS:      s.cfg.FPS,
 		Bitrate:  s.cfg.Bitrate,
-		ToolType: "gstreamer",
+		UseGPU:   s.cfg.UseGPU,
+		ToolType: toolType,
 	}
 
 	opts := desktop.WebRTCOptions{
@@ -1070,41 +1131,41 @@ func (s *Server) setupRoutes() *http.ServeMux {
 	mux.HandleFunc("/api/v1/auth/mfa/verify", s.handleAuthLogin)
 	mux.HandleFunc("/api/auth/logout", s.handleAuthLogout)
 	mux.HandleFunc("/api/v1/auth/logout", s.handleAuthLogout)
-	mux.HandleFunc("/api/auth/refresh", s.handleAuthRefresh)
-	mux.HandleFunc("/api/v1/auth/refresh", s.handleAuthRefresh)
+	mux.HandleFunc("/api/auth/refresh", s.authMiddleware(s.handleAuthRefresh))
+	mux.HandleFunc("/api/v1/auth/refresh", s.authMiddleware(s.handleAuthRefresh))
 	mux.HandleFunc("/api/auth/oauth/providers", s.handleOAuthProviders)
 	mux.HandleFunc("/api/v1/auth/oauth/providers", s.handleOAuthProviders)
 
-	// WebRTC Session routes
+	// WebRTC Session routes (human UI: Bearer or xc_session cookie)
 	mux.HandleFunc("/api/session", s.handleCreateSession)
 	mux.HandleFunc("/api/v1/session", s.handleCreateSession)
 	mux.HandleFunc("/api/session/", s.authMiddleware(s.handleDeleteSession))
 	mux.HandleFunc("/api/v1/session/", s.authMiddleware(s.handleDeleteSession))
 
-	// DSH Remote device registration & listing compatibility routes
-	mux.HandleFunc("/api/v1/devices/register", s.authMiddleware(s.handleDeviceRegister))
-	mux.HandleFunc("/api/v1/devices", s.authMiddleware(s.handleDevicesList))
-	mux.HandleFunc("/api/v1/devices/", s.authMiddleware(s.handleDeviceItem))
+	// DSH Remote device registration & listing compatibility routes (Bearer only)
+	mux.HandleFunc("/api/v1/devices/register", s.apiAuthMiddleware(s.handleDeviceRegister))
+	mux.HandleFunc("/api/v1/devices", s.apiAuthMiddleware(s.handleDevicesList))
+	mux.HandleFunc("/api/v1/devices/", s.apiAuthMiddleware(s.handleDeviceItem))
 
-	// AI Agent Desktop Actuation & Perception API
-	mux.HandleFunc("/api/desktop/info", s.handleDesktopInfo)
-	mux.HandleFunc("/api/v1/desktop/info", s.handleDesktopInfo)
-	mux.HandleFunc("/api/desktop/screenshot", s.handleDesktopScreenshot)
-	mux.HandleFunc("/api/v1/desktop/screenshot", s.handleDesktopScreenshot)
-	mux.HandleFunc("/api/desktop/action", s.authMiddleware(s.handleDesktopAction))
-	mux.HandleFunc("/api/v1/desktop/action", s.authMiddleware(s.handleDesktopAction))
-	mux.HandleFunc("/api/desktop/clipboard", s.authMiddleware(s.handleDesktopClipboard))
-	mux.HandleFunc("/api/v1/desktop/clipboard", s.authMiddleware(s.handleDesktopClipboard))
-	mux.HandleFunc("/api/desktop/windows", s.authMiddleware(s.handleDesktopWindows))
-	mux.HandleFunc("/api/v1/desktop/windows", s.authMiddleware(s.handleDesktopWindows))
-	mux.HandleFunc("/api/desktop/windows/focus", s.authMiddleware(s.handleDesktopWindowFocus))
-	mux.HandleFunc("/api/v1/desktop/windows/focus", s.authMiddleware(s.handleDesktopWindowFocus))
-	mux.HandleFunc("/api/desktop/launch", s.authMiddleware(s.handleDesktopLaunch))
-	mux.HandleFunc("/api/v1/desktop/launch", s.authMiddleware(s.handleDesktopLaunch))
+	// AI Agent Desktop APIs require Authorization: Bearer (cookie-only is rejected)
+	mux.HandleFunc("/api/desktop/info", s.apiAuthMiddleware(s.handleDesktopInfo))
+	mux.HandleFunc("/api/v1/desktop/info", s.apiAuthMiddleware(s.handleDesktopInfo))
+	mux.HandleFunc("/api/desktop/screenshot", s.apiAuthMiddleware(s.handleDesktopScreenshot))
+	mux.HandleFunc("/api/v1/desktop/screenshot", s.apiAuthMiddleware(s.handleDesktopScreenshot))
+	mux.HandleFunc("/api/desktop/action", s.apiAuthMiddleware(s.handleDesktopAction))
+	mux.HandleFunc("/api/v1/desktop/action", s.apiAuthMiddleware(s.handleDesktopAction))
+	mux.HandleFunc("/api/desktop/clipboard", s.apiAuthMiddleware(s.handleDesktopClipboard))
+	mux.HandleFunc("/api/v1/desktop/clipboard", s.apiAuthMiddleware(s.handleDesktopClipboard))
+	mux.HandleFunc("/api/desktop/windows", s.apiAuthMiddleware(s.handleDesktopWindows))
+	mux.HandleFunc("/api/v1/desktop/windows", s.apiAuthMiddleware(s.handleDesktopWindows))
+	mux.HandleFunc("/api/desktop/windows/focus", s.apiAuthMiddleware(s.handleDesktopWindowFocus))
+	mux.HandleFunc("/api/v1/desktop/windows/focus", s.apiAuthMiddleware(s.handleDesktopWindowFocus))
+	mux.HandleFunc("/api/desktop/launch", s.apiAuthMiddleware(s.handleDesktopLaunch))
+	mux.HandleFunc("/api/v1/desktop/launch", s.apiAuthMiddleware(s.handleDesktopLaunch))
 
-	// Agent MCP Discovery & OpenAPI Specification
-	mux.HandleFunc("/api/desktop/mcp/manifest", s.handleMCPManifest)
-	mux.HandleFunc("/api/v1/desktop/mcp/manifest", s.handleMCPManifest)
+	// MCP catalog requires Bearer. OpenAPI is public (schema only; no live state or secrets).
+	mux.HandleFunc("/api/desktop/mcp/manifest", s.apiAuthMiddleware(s.handleMCPManifest))
+	mux.HandleFunc("/api/v1/desktop/mcp/manifest", s.apiAuthMiddleware(s.handleMCPManifest))
 	mux.HandleFunc("/api/v1/openapi.json", s.handleOpenAPI)
 
 	return mux
@@ -1132,7 +1193,7 @@ func main() {
 	defer cancel()
 
 	go func() {
-		log.Printf("Starting xworkmate-remote-desktop %s listening on %s (display %s)", version, cfg.ListenAddr, cfg.Display)
+		log.Printf("Starting xworkmate-remote-desktop %s listening on %s (display %s, capture %dx%d@%dfps tool=%s gpu=%v bitrate=%dk)", version, cfg.ListenAddr, cfg.Display, cfg.Width, cfg.Height, cfg.FPS, cfg.CaptureTool, cfg.UseGPU, cfg.Bitrate)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("HTTP server error: %v", err)
 		}

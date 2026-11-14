@@ -118,9 +118,39 @@ func (s *Server) handleDesktopScreenshot(w http.ResponseWriter, r *http.Request)
 	q := r.URL.Query()
 	format := q.Get("format")
 	raw := q.Get("raw") == "true" || strings.Contains(r.Header.Get("Accept"), "image/")
+	scale := 0.0
+	if scaleStr := strings.TrimSpace(q.Get("scale")); scaleStr != "" {
+		if parsed, err := strconv.ParseFloat(scaleStr, 64); err == nil {
+			scale = parsed
+		}
+	}
+
+	if r.Method == http.MethodPost && r.Body != nil {
+		var body struct {
+			Format string   `json:"format"`
+			Base64 *bool    `json:"base64"`
+			Scale  *float64 `json:"scale"`
+			Raw    bool     `json:"raw"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err == nil {
+			if strings.TrimSpace(body.Format) != "" {
+				format = body.Format
+			}
+			if body.Scale != nil && *body.Scale > 0 {
+				scale = *body.Scale
+			}
+			if body.Raw {
+				raw = true
+			}
+			if body.Base64 != nil && !*body.Base64 {
+				raw = true
+			}
+		}
+	}
 
 	opts := desktop.ScreenshotOptions{
 		Format: format,
+		Scale:  scale,
 	}
 
 	bytes, outFormat, err := s.agentCtrl.CaptureScreenshot(r.Context(), opts)
@@ -138,6 +168,16 @@ func (s *Server) handleDesktopScreenshot(w http.ResponseWriter, r *http.Request)
 	}
 
 	wWidth, wHeight := s.agentCtrl.GetGeometry()
+	if scale > 0 && scale != 1 {
+		wWidth = int(float64(wWidth) * scale)
+		wHeight = int(float64(wHeight) * scale)
+		if wWidth < 1 {
+			wWidth = 1
+		}
+		if wHeight < 1 {
+			wHeight = 1
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"format":    outFormat,
 		"width":     wWidth,
@@ -331,46 +371,5 @@ func (s *Server) handleMCPManifest(w http.ResponseWriter, r *http.Request) {
 
 // handleOpenAPI returns the OpenAPI 3.0 specification for AI Agent tool generation
 func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
-	spec := map[string]any{
-		"openapi": "3.0.3",
-		"info": map[string]any{
-			"title":       "XWorkmate Remote Desktop & AI Agent Control API",
-			"description": "Unified WebRTC remote streaming, human interactive desktop, and AI Agent actuation/perception API.",
-			"version":     "1.0.0",
-		},
-		"paths": map[string]any{
-			"/api/v1/desktop/info": map[string]any{
-				"get": map[string]any{
-					"summary":     "Get display geometry, mouse position, and capabilities",
-					"description": "Used by AI agents to perceive the viewport and check supported actions.",
-				},
-			},
-			"/api/v1/desktop/screenshot": map[string]any{
-				"get": map[string]any{
-					"summary":     "Capture a screenshot of the X11 desktop",
-					"description": "Returns raw binary image (image/png) or JSON with base64 encoded image.",
-				},
-			},
-			"/api/v1/desktop/action": map[string]any{
-				"post": map[string]any{
-					"summary":     "Execute mouse and keyboard actions",
-					"description": "Executes single action or batch of actions with optional immediate screenshot return.",
-				},
-			},
-			"/api/v1/desktop/clipboard": map[string]any{
-				"get": map[string]any{
-					"summary": "Read clipboard text",
-				},
-				"post": map[string]any{
-					"summary": "Write clipboard text",
-				},
-			},
-			"/api/v1/desktop/mcp/manifest": map[string]any{
-				"get": map[string]any{
-					"summary": "Get Model Context Protocol (MCP) tool manifest",
-				},
-			},
-		},
-	}
-	writeJSON(w, http.StatusOK, spec)
+	writeJSON(w, http.StatusOK, desktop.GenerateOpenAPI())
 }

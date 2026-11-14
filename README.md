@@ -43,9 +43,13 @@ Every flag has an environment variable; the flag wins when both are set.
 | `--udp-port-min` / `--udp-port-max` | `XRD_UDP_PORT_MIN` / `XRD_UDP_PORT_MAX` | `0` | UDP port range for WebRTC media |
 | `--nat1to1-ip` | `XRD_NAT1TO1_IP` | empty | Public IP advertised as host candidate |
 | `--rtp-port` | `XRD_RTP_PORT` | library default | Local UDP port for GStreamer RTP |
-| `--width` / `--height` | `XRD_WIDTH` / `XRD_HEIGHT` | `1280` / `720` | Capture size |
-| `--fps` | `XRD_FPS` | `30` | Capture frame rate |
+| `--width` / `--height` | `XRD_WIDTH` / `XRD_HEIGHT` | `1280` / `720` | Capture size (not 1080p unless you set it) |
+| `--fps` | `XRD_FPS` | `30` | Capture frame rate (not 60 unless you set it) |
 | `--bitrate` | `XRD_BITRATE` | `2000` | Video bitrate in kbps |
+| `--use-gpu` | `XRD_USE_GPU` | `false` | If true, prefer `nvh264enc` / `h264_nvenc`; default is software `x264enc` |
+| `--capture-tool` | `XRD_CAPTURE_TOOL` | `gstreamer` | `gstreamer`, `ffmpeg`, or `auto` |
+
+The WebRTC video track is **H.264 only** (no VP8). Default capture is **1280×720 @ 30fps** with software `x264enc` (`tune=zerolatency`). Hardware encode and 1080p/60fps are opt-in via the flags above and are not a measured SLA; this repository does not publish an end-to-end 50–80ms latency claim.
 
 ## HTTP API
 
@@ -64,15 +68,15 @@ All API endpoints support both `/api/...` and `/api/v1/...` prefixes. Unmatched 
 
 | Endpoint | Method | Auth | Description |
 | :--- | :--- | :--- | :--- |
-| `/api/v1/desktop/info` | GET | public/token | Query display resolution, mouse coordinates, active window, and capabilities |
-| `/api/v1/desktop/screenshot` | GET | public/token | Capture live screenshot. Returns raw binary image (`?raw=true`) or JSON base64 |
-| `/api/v1/desktop/action` | POST | token/cookie | Execute atomic action (`click`, `move`, `type`, `key`, `drag`, `scroll`) or batch actions |
-| `/api/v1/desktop/clipboard` | GET/POST | token/cookie | Read or write X11 clipboard text |
-| `/api/v1/desktop/windows` | GET | token/cookie | List all visible windows, their geometries, PIDs, and titles |
-| `/api/v1/desktop/windows/focus` | POST | token/cookie | Focus window by ID or Title |
-| `/api/v1/desktop/launch` | POST | token/cookie | Launch application command in X11 environment |
-| `/api/v1/desktop/mcp/manifest` | GET | none | Model Context Protocol (MCP) tool schema definitions for autonomous agents |
-| `/api/v1/openapi.json` | GET | none | OpenAPI 3.0 specification for automated SDK/tool generation |
+| `/api/v1/desktop/info` | GET | **Bearer** | Display resolution, mouse, active window, capabilities |
+| `/api/v1/desktop/screenshot` | GET/POST | **Bearer** | Raw PNG (`?raw=true`) or JSON base64; POST body may include `format`, `scale`, `base64` |
+| `/api/v1/desktop/action` | POST | **Bearer** | Single action or `actions[]` batch, optional `return_screenshot` |
+| `/api/v1/desktop/clipboard` | GET/POST | **Bearer** | Read or write X11 clipboard text |
+| `/api/v1/desktop/windows` | GET | **Bearer** | List visible windows |
+| `/api/v1/desktop/windows/focus` | POST | **Bearer** | Focus window by ID or title |
+| `/api/v1/desktop/launch` | POST | **Bearer** | Launch an application on the X11 display |
+| `/api/v1/desktop/mcp/manifest` | GET | **Bearer** | HTTP JSON tool catalog (not a full MCP JSON-RPC/SSE server) |
+| `/api/v1/openapi.json` | GET | none | OpenAPI 3.0 document (schema only; no secrets or live desktop state) |
 
 ### Unified Authentication & DSH Remote Compatibility
 
@@ -80,10 +84,11 @@ All API endpoints support both `/api/...` and `/api/v1/...` prefixes. Unmatched 
 | :--- | :--- | :--- | :--- |
 | `/api/v1/auth/status` | GET | optional | Introspect session status and auth modes |
 | `/api/v1/auth/login` | POST | optional | SSO Accounts or static token login; returns DSH-compatible token payload |
-| `/api/v1/auth/logout` | POST | token/cookie | Invalidate session token and clear cookies |
+| `/api/v1/auth/logout` | POST | Bearer or cookie | Invalidate session token and clear cookies |
+| `/api/v1/auth/refresh` | POST | Bearer or cookie | Token refresh (unauthenticated callers are rejected) |
 | `/api/v1/auth/oauth/providers` | GET | none | OAuth providers discovery |
-| `/api/v1/devices/register` | POST | token | DSH Remote client device registration |
-| `/api/v1/devices` | GET | token | Lists desktop host as an available remote device |
+| `/api/v1/devices/register` | POST | **Bearer** | DSH Remote client device registration |
+| `/api/v1/devices` | GET | **Bearer** | Lists desktop host as an available remote device |
 
 ## AI Agent Integration
 
@@ -107,14 +112,36 @@ curl -X POST "https://desktop.svc.plus/api/v1/desktop/action" \
   }'
 ```
 
-Both normalized coordinates `[0.0 .. 1.0]` and absolute pixel coordinates are supported. Human users can watch the AI Agent's actions in real-time over the WebRTC stream at `https://desktop.svc.plus/`.
+Human users watch the agent over the WebRTC stream at `https://desktop.svc.plus/` (SSO cookie or Bearer on session routes). Agent HTTP APIs require `Authorization: Bearer` and do **not** accept cookie-only requests.
+
+### Coordinates
+
+Auto mode (default):
+
+- Non-integer values in `[0, 1]`, such as `{"x": 0.5, "y": 0.5}`, are normalized viewport fractions.
+- Integer values, including `(0,0)`, `(1,1)`, and `(1.0, 1.0)`, are absolute pixels, so a click at `(1,1)` hits the top-left rather than the bottom-right.
+- Override with `"coord_mode": "normalized"` / `"pixel"` or `"normalized": true|false`.
+
+Documented aliases are accepted: `clicks` → `count`, `direction`+`amount` for scroll, `keys: ["ctrl","c"]` → `key: "ctrl+c"`, and drag `x,y,to_x,to_y` as well as `from_x,from_y`.
+
+### Typing
+
+Short ASCII still uses `xdotool type --delay 12`. Multiline, non-ASCII, or text of at least 48 runes automatically pastes via the X11 clipboard and `ctrl+v`. Force either path with `"mode": "type"` or `"mode": "paste"`. Prefer the clipboard API for large snippets.
 
 ## Authentication
 
+There are two authentication surfaces:
+
+- **Agent / desktop APIs** (info, screenshot, action, clipboard, windows, launch, MCP, devices): require an `Authorization: Bearer <token>` header. A static XRD token or an accounts session token is accepted in that header. The `xc_session` cookie alone is rejected.
+- **Human web UI** (page load, WebRTC `POST /api/v1/session`, session teardown, auth status/logout): may use the `xc_session` cookie set by `accounts.svc.plus` SSO, a Bearer header, or the `"token"` field in the session JSON body.
+
+`GET /healthz` and `GET /api/v1/openapi.json` stay public. The OpenAPI document describes `bearerAuth` and the cookie scheme but does not include secrets or live display state. `GET /` serves the web client without auth; establishing a stream still goes through session auth.
+
 Send the token **in the request**, never in the URL:
 
-- `Authorization: Bearer <token>` header, or
-- `"token"` field in the `POST /api/session` JSON body (used by the web client).
+- `Authorization: Bearer <token>` header (required for agent APIs), or
+- `"token"` field in the `POST /api/session` JSON body (web client), or
+- `xc_session` cookie (web UI only).
 
 Tokens are compared in constant time. Do not put a token in a query string: it
 ends up in browser history, proxy logs, and the `Referer` header. If the web
@@ -151,11 +178,9 @@ go test ./...
 
 ## Current status
 
-This repository is an extraction baseline, not a production replacement. The
-source projects remain authoritative while client package boundaries,
-packaging, and deployment are completed. The standalone server now provides the
-signaling endpoint, token authentication, and a browser client; integrating
-identity from `accounts.svc.plus` is tracked separately.
+The standalone server provides WebRTC signaling, a browser client, static
+Bearer tokens, and `accounts.svc.plus` SSO (`xc_session`) for the human UI.
+Agent APIs are Bearer-only. Capture defaults to 1280×720 @ 30fps software H.264.
 
 The server currently uses X11 (`ximagesrc`/`x11grab`) and `xdotool`. Long term,
 platform backends will move behind capture and input interfaces so the server
