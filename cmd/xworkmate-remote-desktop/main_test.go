@@ -9,6 +9,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ai-workspace-lab/xworkmate-remote-desktop/server/desktop"
+	"golang.org/x/net/websocket"
 )
 
 func TestParseFlagsAndEnvDefaults(t *testing.T) {
@@ -742,5 +745,46 @@ func TestParseUseGPUAndCaptureToolFlags(t *testing.T) {
 	}
 	if !cfg.UseGPU || cfg.CaptureTool != "ffmpeg" || cfg.Width != 1920 || cfg.Height != 1080 || cfg.FPS != 60 {
 		t.Fatalf("unexpected cfg: gpu=%v tool=%s %dx%d@%d", cfg.UseGPU, cfg.CaptureTool, cfg.Width, cfg.Height, cfg.FPS)
+	}
+}
+
+func TestControlWebSocketRoute(t *testing.T) {
+	srv := NewServer(Config{Token: "test-token"})
+	mux := srv.setupRoutes()
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/control"
+	config, err := websocket.NewConfig(wsURL, "http://localhost")
+	if err != nil {
+		t.Fatalf("failed config: %v", err)
+	}
+
+	ws, err := websocket.DialConfig(config)
+	if err != nil {
+		t.Fatalf("failed ws dial: %v", err)
+	}
+	defer ws.Close()
+
+	hello := desktop.ControlFrame{
+		V:    1,
+		Type: "hello",
+		Payload: map[string]any{
+			"role":          "host",
+			"deviceId":      "test-dsh-host",
+			"clientVersion": "1.0.0",
+		},
+	}
+	if err := websocket.JSON.Send(ws, hello); err != nil {
+		t.Fatalf("failed to send hello: %v", err)
+	}
+
+	_ = ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var ack desktop.ControlFrame
+	if err := websocket.JSON.Receive(ws, &ack); err != nil {
+		t.Fatalf("failed receive ack: %v", err)
+	}
+	if ack.Type != "hello.ack" {
+		t.Fatalf("expected hello.ack, got %s", ack.Type)
 	}
 }

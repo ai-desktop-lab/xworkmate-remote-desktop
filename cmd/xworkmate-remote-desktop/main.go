@@ -250,6 +250,7 @@ type Server struct {
 	cfg        Config
 	service    *desktop.Service
 	agentCtrl  *desktop.AgentController
+	controlGw  *desktop.ControlGateway
 	httpClient *http.Client
 	mu         sync.Mutex
 	activeSess string
@@ -262,6 +263,7 @@ func NewServer(cfg Config) *Server {
 		cfg:        cfg,
 		service:    desktop.GetService(),
 		agentCtrl:  desktop.NewAgentController(cfg.Display),
+		controlGw:  desktop.NewControlGateway(),
 		httpClient: &http.Client{Timeout: 5 * time.Second},
 		authCache:  make(map[string]authCacheEntry),
 	}
@@ -1135,6 +1137,11 @@ func (s *Server) setupRoutes() *http.ServeMux {
 	mux.HandleFunc("/api/v1/auth/refresh", s.authMiddleware(s.handleAuthRefresh))
 	mux.HandleFunc("/api/auth/oauth/providers", s.handleOAuthProviders)
 	mux.HandleFunc("/api/v1/auth/oauth/providers", s.handleOAuthProviders)
+
+	// WebSocket Control Gateway for DSH Remote
+	controlHandler := s.controlGw.Handler()
+	mux.Handle("/api/control", controlHandler)
+	mux.Handle("/api/v1/control", controlHandler)
 
 	// WebRTC Session routes (human UI: Bearer or xc_session cookie)
 	mux.HandleFunc("/api/session", s.handleCreateSession)
