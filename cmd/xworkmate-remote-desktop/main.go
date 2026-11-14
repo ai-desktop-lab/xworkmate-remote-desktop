@@ -646,7 +646,12 @@ func writeJSONError(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, map[string]any{
 		"authenticated": false,
 		"error":         code,
-		"message":       msg,
+		"error_detail": map[string]any{
+			"code":      code,
+			"message":   msg,
+			"retryable": status >= 500 || status == 429,
+		},
+		"message": msg,
 	})
 }
 
