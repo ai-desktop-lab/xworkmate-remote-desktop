@@ -70,18 +70,20 @@
     .status-badge.error .status-dot { background: #ef4444; }
     .status-badge.error { color: #f87171; }
 
-    input[type="password"], input[type="text"] {
+    input[type="password"], input[type="text"], input[type="email"] {
       background: #1e293b;
       border: 1px solid #334155;
       color: #f1f5f9;
       padding: 6px 12px;
       border-radius: 6px;
       font-size: 13px;
-      outline: none;
       width: 220px;
     }
-    input:focus { border-color: #3b82f6; }
-    button {
+    input:focus-visible, button:focus-visible, a.btn:focus-visible {
+      outline: 2px solid #60a5fa;
+      outline-offset: 2px;
+    }
+    button, a.btn {
       background: #2563eb;
       color: #ffffff;
       border: none;
@@ -92,15 +94,110 @@
       cursor: pointer;
       display: inline-flex;
       align-items: center;
+      text-decoration: none;
+      white-space: nowrap;
       transition: background 0.15s ease;
     }
-    button:hover { background: #1d4ed8; }
-    button.secondary {
+    button:hover, a.btn:hover { background: #1d4ed8; }
+    button.secondary, a.btn.secondary {
       background: #334155;
       color: #cbd5e1;
     }
-    button.secondary:hover { background: #475569; }
+    button.secondary:hover, a.btn.secondary:hover { background: #475569; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
+    [hidden] { display: none !important; }
+
+    .user-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 500;
+      background: #0f291e;
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      color: #6ee7b7;
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    dialog#login-dialog {
+      margin: auto;
+      background: #0f172a;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 24px;
+      width: min(400px, calc(100vw - 32px));
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
+    }
+    dialog#login-dialog::backdrop {
+      background: rgba(2, 6, 23, 0.72);
+      backdrop-filter: blur(4px);
+    }
+    #login-form {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    #login-dialog-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #f8fafc;
+    }
+    .login-subtitle {
+      font-size: 13px;
+      color: #94a3b8;
+      line-height: 1.4;
+    }
+    .form-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .form-field label {
+      font-size: 13px;
+      font-weight: 500;
+      color: #cbd5e1;
+    }
+    #login-form input {
+      width: 100%;
+      font: inherit;
+      font-size: max(1rem, 1em);
+      padding: 10px 12px;
+      min-height: 44px;
+    }
+    .password-row {
+      display: flex;
+      gap: 8px;
+      align-items: stretch;
+    }
+    .password-row input {
+      flex: 1;
+      min-width: 0;
+    }
+    .form-error {
+      padding: 10px 12px;
+      border-radius: 6px;
+      background: rgba(127, 29, 29, 0.45);
+      border: 1px solid rgba(248, 113, 113, 0.45);
+      color: #fecaca;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .dialog-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 4px;
+      flex-wrap: wrap;
+    }
+    .dialog-actions button[type="submit"] {
+      min-height: 40px;
+    }
 
     #container {
       position: absolute;
@@ -142,13 +239,52 @@
       <span class="status-dot"></span>
       <span id="status-text">Disconnected</span>
     </div>
+    <span class="user-badge" id="user-badge" hidden></span>
+    <button id="open-login-btn" type="button" hidden>Sign In</button>
+    <a id="sso-login-link" class="btn secondary" target="_blank" rel="noopener" hidden>SSO Login</a>
+    <button id="logout-btn" type="button" class="secondary" hidden>Sign Out</button>
+    <button id="toggle-token-btn" type="button" class="secondary" aria-expanded="false" aria-controls="token-input" hidden>Token</button>
     <input type="password" id="token-input" placeholder="Authorization Token" autocomplete="off" />
-    <button id="connect-btn">Connect</button>
-    <button id="disconnect-btn" class="secondary" disabled>Disconnect</button>
+    <button id="connect-btn" type="button">Connect</button>
+    <button id="disconnect-btn" type="button" class="secondary" disabled>Disconnect</button>
     <div style="flex: 1;"></div>
-    <button id="fullscreen-btn" class="secondary">Fullscreen</button>
+    <button id="fullscreen-btn" type="button" class="secondary">Fullscreen</button>
   </div>
-  <button id="toggle-toolbar-btn">▲ Hide Bar</button>
+  <button id="toggle-toolbar-btn" type="button">▲ Hide Bar</button>
+
+  <dialog id="login-dialog" aria-labelledby="login-dialog-title">
+    <form id="login-form" method="post" action="/api/auth/login">
+      <h2 id="login-dialog-title">Sign in with Accounts</h2>
+      <p class="login-subtitle">Sign in using your svc.plus account or open Console SSO in another tab.</p>
+
+      <div id="login-credentials-group" class="form-field">
+        <div class="form-field">
+          <label for="login-email">Email</label>
+          <input id="login-email" name="email" type="email" autocomplete="username" spellcheck="false" enterkeyhint="next" required />
+        </div>
+        <div class="form-field">
+          <label for="login-password">Password</label>
+          <div class="password-row">
+            <input id="login-password" name="password" type="password" autocomplete="current-password" enterkeyhint="done" required />
+            <button id="toggle-password-btn" type="button" class="secondary" aria-pressed="false" aria-label="Show password">Show</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="login-mfa-group" class="form-field" hidden>
+        <label for="login-totp">Authenticator Code (6 digits)</label>
+        <input id="login-totp" name="totp" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" enterkeyhint="done" disabled />
+      </div>
+
+      <div id="login-error" class="form-error" role="status" aria-live="polite" hidden></div>
+
+      <div class="dialog-actions">
+        <button id="login-submit-btn" type="submit">Sign In</button>
+        <button id="login-cancel-btn" type="button" class="secondary">Cancel</button>
+        <a id="dialog-sso-link" class="btn secondary" target="_blank" rel="noopener" hidden>Console SSO</a>
+      </div>
+    </form>
+  </dialog>
 
   <div id="container" tabindex="0">
     <video id="remote-video" autoplay playsinline muted></video>
@@ -162,9 +298,23 @@
     let moveDc = null;
     let sessionId = null;
     let seq = 0;
+    let pendingMfaTicket = "";
+    let showTokenFallback = false;
+    let authState = {
+      authenticated: false,
+      accounts_enabled: false,
+      token_enabled: true,
+      login_url: "",
+      user: null
+    };
 
     const statusBadge = document.getElementById("status-badge");
     const statusText = document.getElementById("status-text");
+    const userBadge = document.getElementById("user-badge");
+    const openLoginBtn = document.getElementById("open-login-btn");
+    const ssoLoginLink = document.getElementById("sso-login-link");
+    const logoutBtn = document.getElementById("logout-btn");
+    const toggleTokenBtn = document.getElementById("toggle-token-btn");
     const tokenInput = document.getElementById("token-input");
     const connectBtn = document.getElementById("connect-btn");
     const disconnectBtn = document.getElementById("disconnect-btn");
@@ -174,6 +324,19 @@
     const container = document.getElementById("container");
     const video = document.getElementById("remote-video");
     const overlayMsg = document.getElementById("overlay-msg");
+
+    const loginDialog = document.getElementById("login-dialog");
+    const loginForm = document.getElementById("login-form");
+    const loginCredGroup = document.getElementById("login-credentials-group");
+    const loginMfaGroup = document.getElementById("login-mfa-group");
+    const loginEmail = document.getElementById("login-email");
+    const loginPassword = document.getElementById("login-password");
+    const togglePasswordBtn = document.getElementById("toggle-password-btn");
+    const loginTotp = document.getElementById("login-totp");
+    const loginError = document.getElementById("login-error");
+    const loginSubmitBtn = document.getElementById("login-submit-btn");
+    const loginCancelBtn = document.getElementById("login-cancel-btn");
+    const dialogSsoLink = document.getElementById("dialog-sso-link");
 
     // Load token from URL hash (preferred for security: never sent to server logs),
     // URL query param, localStorage, or sessionStorage
@@ -260,6 +423,7 @@
         try {
           await fetch("/api/session/" + encodeURIComponent(sessionId), {
             method: "DELETE",
+            credentials: "same-origin",
             headers: token ? { "Authorization": "Bearer " + token } : {}
           });
         } catch (e) {}
@@ -346,6 +510,7 @@
       try {
         resp = await fetch("/api/session", {
           method: "POST",
+          credentials: "same-origin",
           headers: headers,
           body: JSON.stringify(payload)
         });
@@ -465,7 +630,198 @@
       });
     });
 
-    // Auto-connect if token is present on initial load
+    function renderAuthState() {
+      const hasAccounts = Boolean(authState.accounts_enabled);
+      const isAcctUser = Boolean(authState.authenticated && authState.user);
+      const hasToken = tokenInput.value.trim().length > 0;
+
+      if (isAcctUser) {
+        const label = authState.user.email || authState.user.name || authState.user.user_id || "Authenticated";
+        userBadge.textContent = label;
+        userBadge.title = label;
+        userBadge.hidden = false;
+        logoutBtn.hidden = false;
+        openLoginBtn.hidden = true;
+        ssoLoginLink.hidden = true;
+      } else {
+        userBadge.hidden = true;
+        logoutBtn.hidden = true;
+        openLoginBtn.hidden = !hasAccounts;
+        if (hasAccounts && authState.login_url) {
+          ssoLoginLink.href = authState.login_url;
+          ssoLoginLink.hidden = false;
+          dialogSsoLink.href = authState.login_url;
+          dialogSsoLink.hidden = false;
+        } else {
+          ssoLoginLink.hidden = true;
+          dialogSsoLink.hidden = true;
+        }
+      }
+
+      if (hasAccounts && authState.token_enabled) {
+        toggleTokenBtn.hidden = false;
+        const expanded = showTokenFallback || hasToken;
+        toggleTokenBtn.setAttribute("aria-expanded", expanded ? "true" : "false");
+        tokenInput.hidden = !expanded;
+      } else {
+        toggleTokenBtn.hidden = true;
+        tokenInput.hidden = !authState.token_enabled;
+      }
+
+      if (authState.forbidden && authState.error && !pc) {
+        setStatus("error", authState.error);
+      }
+    }
+
+    async function refreshAuthStatus() {
+      try {
+        const token = tokenInput.value.trim();
+        const headers = token ? { "Authorization": "Bearer " + token } : {};
+        const resp = await fetch("/api/auth/status", {
+          method: "GET",
+          credentials: "same-origin",
+          headers: headers
+        });
+        if (resp.ok) {
+          authState = await resp.json();
+          renderAuthState();
+        }
+      } catch (e) {}
+    }
+
+    function resetLoginDialog() {
+      pendingMfaTicket = "";
+      loginCredGroup.hidden = false;
+      loginEmail.disabled = false;
+      loginPassword.disabled = false;
+      loginMfaGroup.hidden = true;
+      loginTotp.disabled = true;
+      loginTotp.required = false;
+      loginTotp.value = "";
+      loginError.hidden = true;
+      loginError.textContent = "";
+      loginSubmitBtn.disabled = false;
+      loginSubmitBtn.textContent = "Sign In";
+    }
+
+    function showLoginError(msg) {
+      loginError.textContent = msg;
+      loginError.hidden = false;
+    }
+
+    openLoginBtn.addEventListener("click", () => {
+      resetLoginDialog();
+      if (typeof loginDialog.showModal === "function") {
+        loginDialog.showModal();
+      } else {
+        loginDialog.setAttribute("open", "");
+      }
+      loginEmail.focus();
+    });
+
+    loginCancelBtn.addEventListener("click", () => {
+      if (typeof loginDialog.close === "function") {
+        loginDialog.close();
+      } else {
+        loginDialog.removeAttribute("open");
+      }
+    });
+
+    toggleTokenBtn.addEventListener("click", () => {
+      showTokenFallback = !showTokenFallback;
+      renderAuthState();
+      if (!tokenInput.hidden) {
+        tokenInput.focus();
+      }
+    });
+
+    togglePasswordBtn.addEventListener("click", () => {
+      const showing = loginPassword.type === "text";
+      loginPassword.type = showing ? "password" : "text";
+      togglePasswordBtn.setAttribute("aria-pressed", showing ? "false" : "true");
+      togglePasswordBtn.textContent = showing ? "Show" : "Hide";
+    });
+
+    [loginEmail, loginPassword, loginTotp].forEach((el) => {
+      el.addEventListener("input", () => {
+        if (!loginError.hidden) {
+          loginError.hidden = true;
+          loginError.textContent = "";
+        }
+      });
+    });
+
+    loginForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      loginError.hidden = true;
+      loginError.textContent = "";
+
+      const payload = pendingMfaTicket
+        ? { mfa_ticket: pendingMfaTicket, code: loginTotp.value.trim() }
+        : { email: loginEmail.value.trim(), password: loginPassword.value };
+
+      loginSubmitBtn.disabled = true;
+      loginSubmitBtn.textContent = "Signing In...";
+      try {
+        const resp = await fetch("/api/auth/login", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          showLoginError(data.message || data.error || ("Sign in failed (" + resp.status + ")"));
+          return;
+        }
+        if (data.mfa_required && data.mfa_ticket) {
+          pendingMfaTicket = data.mfa_ticket;
+          loginCredGroup.hidden = true;
+          loginEmail.disabled = true;
+          loginPassword.disabled = true;
+          loginMfaGroup.hidden = false;
+          loginTotp.disabled = false;
+          loginTotp.required = true;
+          loginSubmitBtn.textContent = "Verify Code";
+          loginTotp.focus();
+          return;
+        }
+        if (typeof loginDialog.close === "function") {
+          loginDialog.close();
+        } else {
+          loginDialog.removeAttribute("open");
+        }
+        loginPassword.value = "";
+        await refreshAuthStatus();
+      } catch (err) {
+        showLoginError("Network error: " + err.message);
+      } finally {
+        loginSubmitBtn.disabled = false;
+        if (!pendingMfaTicket) {
+          loginSubmitBtn.textContent = "Sign In";
+        }
+      }
+    });
+
+    logoutBtn.addEventListener("click", async () => {
+      await disconnect();
+      try {
+        await fetch("/api/auth/logout", {
+          method: "POST",
+          credentials: "same-origin"
+        });
+      } catch (e) {}
+      await refreshAuthStatus();
+    });
+
+    window.addEventListener("focus", () => {
+      if (authState.accounts_enabled && !authState.authenticated && !loginDialog.open) {
+        refreshAuthStatus();
+      }
+    });
+
+    // Initialize auth state and auto-connect if token is present on initial load
+    refreshAuthStatus();
     if (tokenInput.value.trim().length > 0) {
       window.addEventListener("DOMContentLoaded", () => connect());
       if (document.readyState === "complete" || document.readyState === "interactive") {
