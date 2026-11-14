@@ -124,3 +124,106 @@ func TestMCPManifestStructure(t *testing.T) {
 		t.Fatalf("expected at least 5 tools, got %d", len(tools))
 	}
 }
+
+func TestCoordIsNormalizedAutoAndOverrides(t *testing.T) {
+	trueVal := true
+	falseVal := false
+	cases := []struct {
+		name       string
+		x, y       float64
+		mode       string
+		flag       *bool
+		normalized bool
+	}{
+		{"center fraction", 0.5, 0.5, "", nil, true},
+		{"zero integers are pixels", 0, 0, "", nil, false},
+		{"one integers are pixels", 1, 1, "", nil, false},
+		{"1.0 1.0 are pixels", 1.0, 1.0, "", nil, false},
+		{"mixed fraction is normalized", 0.0, 0.5, "", nil, true},
+		{"pixels beyond 1", 100, 80, "", nil, false},
+		{"explicit normalized 1,1", 1, 1, "normalized", nil, true},
+		{"explicit pixel 0.5", 0.5, 0.5, "pixel", nil, false},
+		{"normalized flag true", 1, 1, "", &trueVal, true},
+		{"normalized flag false", 0.5, 0.5, "", &falseVal, false},
+	}
+	for _, tc := range cases {
+		got := CoordIsNormalized(tc.x, tc.y, tc.mode, tc.flag)
+		if got != tc.normalized {
+			t.Errorf("%s: CoordIsNormalized(%v,%v) = %v, want %v", tc.name, tc.x, tc.y, got, tc.normalized)
+		}
+	}
+}
+
+func TestResolveCoordsIntegerPixelsAndNormalized(t *testing.T) {
+	ac := &AgentController{display: ":0.0"} // geometry falls back to 1280x720
+
+	assertXY := func(name string, x, y float64, mode string, flag *bool, wantX, wantY int) {
+		t.Helper()
+		gotX, gotY, err := ac.ResolveCoordsWithMode(&x, &y, mode, flag)
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", name, err)
+		}
+		if gotX != wantX || gotY != wantY {
+			t.Errorf("%s: got (%d,%d), want (%d,%d)", name, gotX, gotY, wantX, wantY)
+		}
+	}
+
+	assertXY("0,0 pixels", 0, 0, "", nil, 0, 0)
+	assertXY("1,1 pixels", 1, 1, "", nil, 1, 1)
+	assertXY("1.0,1.0 pixels", 1.0, 1.0, "", nil, 1, 1)
+	assertXY("0.5,0.5 normalized", 0.5, 0.5, "", nil, 640, 360)
+	norm := true
+	assertXY("explicit normalized 1.0,1.0", 1.0, 1.0, "", &norm, 1279, 719)
+	assertXY("coord_mode normalized 1,1", 1, 1, "normalized", nil, 1279, 719)
+	assertXY("absolute 500,300", 500, 300, "", nil, 500, 300)
+}
+
+func TestApplyActionAliases(t *testing.T) {
+	click := AgentAction{Action: "click", Clicks: 3}
+	click.ApplyActionAliases()
+	if click.Count != 3 {
+		t.Errorf("clicks alias: got count %d", click.Count)
+	}
+
+	key := AgentAction{Action: "key", Keys: []string{"ctrl", "c"}}
+	key.ApplyActionAliases()
+	if key.Key != "ctrl+c" {
+		t.Errorf("keys alias: got %q", key.Key)
+	}
+
+	x, y := 0.2, 0.3
+	toX, toY := 0.8, 0.9
+	drag := AgentAction{Action: "drag", X: &x, Y: &y, ToX: &toX, ToY: &toY}
+	drag.ApplyActionAliases()
+	if drag.FromX == nil || *drag.FromX != 0.2 || drag.FromY == nil || *drag.FromY != 0.3 {
+		t.Errorf("drag x,y alias: from=(%v,%v)", drag.FromX, drag.FromY)
+	}
+
+	scroll := AgentAction{Action: "scroll", Direction: "up", Amount: 3}
+	scroll.ApplyActionAliases()
+	if scroll.Dy != -3 || scroll.Count != 3 {
+		t.Errorf("scroll direction/amount: dy=%d count=%d", scroll.Dy, scroll.Count)
+	}
+}
+
+func TestShouldPasteText(t *testing.T) {
+	if ShouldPasteText("hello", "") {
+		t.Error("short ASCII should type, not paste")
+	}
+	if !ShouldPasteText("hello\nworld", "") {
+		t.Error("multiline should paste")
+	}
+	if !ShouldPasteText("你好世界", "") {
+		t.Error("non-ASCII should paste")
+	}
+	long := strings.Repeat("a", TypePasteRuneThreshold)
+	if !ShouldPasteText(long, "") {
+		t.Error("long ASCII should auto-paste")
+	}
+	if ShouldPasteText(long, "type") {
+		t.Error("mode=type should force xdotool even for long text")
+	}
+	if !ShouldPasteText("hi", "paste") {
+		t.Error("mode=paste should always paste")
+	}
+}

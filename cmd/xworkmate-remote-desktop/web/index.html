@@ -906,16 +906,21 @@ Before acting, or whenever you need to check current screen state:
 Endpoint: POST ${origin}/api/v1/desktop/action
 Header: Content-Type: application/json, Authorization: Bearer ${token}
 
+### Authorization
+All perception and actuation APIs below require:
+  Header: Authorization: Bearer ${token}
+Cookie-only (xc_session) is for the human WebRTC UI, not for these agent APIs.
+
 ### Coordinates Standard:
-You can specify coordinates using:
-- Normalized floats in [0.0 .. 1.0] (RECOMMENDED, e.g. {"x": 0.5, "y": 0.5} for screen center)
-- Or absolute physical pixels (e.g. {"x": 640, "y": 360})
+- Non-integer values in [0.0 .. 1.0] are normalized (RECOMMENDED, e.g. {"x": 0.5, "y": 0.5} for screen center).
+- Integer values, including (0,0), (1,1), and (1.0, 1.0), are absolute pixels.
+- Override with "coord_mode": "normalized" | "pixel" or "normalized": true|false.
 
 ### Action Payloads:
 1. Click:
    {"action": "click", "x": 0.5, "y": 0.5, "button": "left", "clicks": 1}
    (button: "left" | "right" | "middle"; clicks: 1 | 2 | 3)
-2. Type text:
+2. Type text (short ASCII uses xdotool type; multiline, non-ASCII, or >=48 runes auto-paste via clipboard + ctrl+v; set "mode": "paste" or "type" to force):
    {"action": "type", "text": "echo 'Hello World'\\n"}
 3. Key combos & shortcuts:
    {"action": "key", "keys": ["ctrl", "c"]} or {"action": "key", "key": "Return"}
@@ -947,8 +952,8 @@ POST ${origin}/api/v1/desktop/action
 - Write clipboard: POST ${origin}/api/v1/desktop/clipboard  Body: {"text": "Pasted text"}
 
 ## 4. MCP Tools & API Schemas
-- Model Context Protocol (MCP) Manifest: ${origin}/api/v1/desktop/mcp/manifest
-- OpenAPI 3.0 Documentation: ${origin}/api/v1/openapi.json
+- HTTP JSON tool catalog (Bearer required, not a full MCP JSON-RPC transport): ${origin}/api/v1/desktop/mcp/manifest
+- OpenAPI 3.0 Documentation (public schema, no live state): ${origin}/api/v1/openapi.json
 `;
     }
 
