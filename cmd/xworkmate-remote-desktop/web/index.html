@@ -325,6 +325,14 @@
       This desktop is fully operable by autonomous AI Agents (DeepSeek Harness, Antigravity, Claude Computer-Use, OSWorld) via atomic REST endpoints and MCP.
     </p>
 
+    <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid #334155; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+      <div style="display: flex; flex-direction: column; overflow: hidden;">
+        <span style="font-size: 11px; color: #94a3b8; font-weight: 600;">🔑 桌面访问令牌 (Desktop Access Token · 真实可用)</span>
+        <span id="agent-active-token" style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; color: #38bdf8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 3px;"></span>
+      </div>
+      <button id="copy-agent-token-btn" type="button" class="secondary" style="padding: 4px 12px; font-size: 11px; white-space: nowrap; border-radius: 6px; cursor: pointer;">复制 Token</button>
+    </div>
+
     <div style="background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(14, 165, 233, 0.35); border-radius: 8px; padding: 12px; margin-bottom: 16px;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
         <span style="font-size: 13px; font-weight: 600; color: #38bdf8;">📋 复制完整 AI Agent 提示词 (Copy AI System Prompt)</span>
@@ -753,6 +761,9 @@
         });
         if (resp.ok) {
           authState = await resp.json();
+          if (authState.token && !tokenInput.value) {
+            tokenInput.value = authState.token;
+          }
           renderAuthState();
         }
       } catch (e) {}
@@ -946,12 +957,17 @@ POST ${origin}/api/v1/desktop/action
     const aiAgentCloseBtn = document.getElementById("ai-agent-close-btn");
     const aiAgentDoneBtn = document.getElementById("ai-agent-done-btn");
     const copyAiPromptBtn = document.getElementById("copy-ai-prompt-btn");
+    const copyAgentTokenBtn = document.getElementById("copy-agent-token-btn");
+    const agentActiveToken = document.getElementById("agent-active-token");
     const aiSystemPromptText = document.getElementById("ai-system-prompt-text");
 
     if (aiAgentBtn && aiAgentDialog) {
       aiAgentBtn.addEventListener("click", () => {
         const origin = window.location.origin;
-        const token = (tokenInput && tokenInput.value.trim()) || "<YOUR_ACCESS_TOKEN>";
+        const token = (tokenInput && tokenInput.value.trim()) || authState.token || "";
+        if (agentActiveToken) {
+          agentActiveToken.textContent = token || "(未获取到访问令牌，请检查服务器配置)";
+        }
         const promptText = generateAgentSystemPrompt(origin, token);
         if (aiSystemPromptText) aiSystemPromptText.value = promptText;
 
@@ -973,6 +989,25 @@ POST ${origin}/api/v1/desktop/action
           aiAgentDialog.setAttribute("open", "");
         }
       });
+
+      if (copyAgentTokenBtn) {
+        copyAgentTokenBtn.addEventListener("click", async () => {
+          const token = (tokenInput && tokenInput.value.trim()) || authState.token || "";
+          if (!token) return;
+          try {
+            await navigator.clipboard.writeText(token);
+            const orig = copyAgentTokenBtn.textContent;
+            copyAgentTokenBtn.textContent = "✓ 已复制！";
+            copyAgentTokenBtn.style.color = "#4ade80";
+            setTimeout(() => {
+              copyAgentTokenBtn.textContent = orig;
+              copyAgentTokenBtn.style.color = "";
+            }, 2000);
+          } catch (e) {
+            prompt("请手动复制访问令牌:", token);
+          }
+        });
+      }
 
       if (copyAiPromptBtn && aiSystemPromptText) {
         copyAiPromptBtn.addEventListener("click", async () => {

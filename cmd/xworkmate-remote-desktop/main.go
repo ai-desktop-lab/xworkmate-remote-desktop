@@ -779,6 +779,9 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 		"accounts_enabled": s.cfg.AccountsURL != "",
 		"login_url":        s.cfg.LoginURL,
 	}
+	if s.cfg.Token != "" {
+		resp["token"] = s.cfg.Token
+	}
 
 	if s.cfg.Token == "" && s.cfg.AccountsURL == "" {
 		resp["authenticated"] = true
