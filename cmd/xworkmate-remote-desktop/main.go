@@ -966,11 +966,17 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if loginData.MFARequiredCamel || loginData.MFARequiredSnake {
+		ticket := firstNonEmpty(loginData.MFATicketSnake, loginData.MFATicketCamel)
+		method := firstNonEmpty(loginData.MFAMethodSnake, loginData.MFAMethodCamel, "totp")
 		writeJSON(w, http.StatusOK, map[string]any{
 			"authenticated": false,
 			"mfa_required":  true,
-			"mfa_method":    firstNonEmpty(loginData.MFAMethodSnake, loginData.MFAMethodCamel, "totp"),
-			"mfa_ticket":    firstNonEmpty(loginData.MFATicketSnake, loginData.MFATicketCamel),
+			"mfaRequired":   true,
+			"mfa_method":    method,
+			"mfaMethod":     method,
+			"mfa_ticket":    ticket,
+			"mfaTicket":     ticket,
+			"mfaToken":      ticket,
 			"message":       "MFA verification required",
 		})
 		return
@@ -1021,6 +1027,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated": true,
 		"token":         tok,
+		"access_token":  tok,
 		"expiresAt":     expTime.UnixMilli(),
 		"expires_in":    maxAge,
 		"account":       accountName,
@@ -1059,6 +1066,8 @@ func (s *Server) setupRoutes() *http.ServeMux {
 	mux.HandleFunc("/api/v1/auth/status", s.handleAuthStatus)
 	mux.HandleFunc("/api/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("/api/v1/auth/login", s.handleAuthLogin)
+	mux.HandleFunc("/api/auth/mfa/verify", s.handleAuthLogin)
+	mux.HandleFunc("/api/v1/auth/mfa/verify", s.handleAuthLogin)
 	mux.HandleFunc("/api/auth/logout", s.handleAuthLogout)
 	mux.HandleFunc("/api/v1/auth/logout", s.handleAuthLogout)
 	mux.HandleFunc("/api/auth/refresh", s.handleAuthRefresh)
