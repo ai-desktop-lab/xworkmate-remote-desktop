@@ -503,6 +503,29 @@ func TestV1AuthCompatibilityAndDeviceAPIs(t *testing.T) {
 		t.Errorf("expected accessToken and refreshToken in response, got %v", regResp)
 	}
 
+	// 3a. Register owned role returns valid tokens (CRITICAL for DSH multi-role auth)
+	ownedReq := httptest.NewRequest(http.MethodPost, "/api/v1/devices/register-owned-role", strings.NewReader(`{"v":1,"device":{"name":"dsh-host"}}`))
+	ownedReq.Header.Set("Authorization", "Bearer test-secret-token-123456")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, ownedReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for register-owned-role, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	var ownedResp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &ownedResp)
+	if ownedResp["accessToken"] == nil || ownedResp["refreshToken"] == nil {
+		t.Errorf("expected accessToken and refreshToken in owned role response, got %v", ownedResp)
+	}
+
+	// 3b. Turn credentials endpoint
+	turnReq := httptest.NewRequest(http.MethodGet, "/api/v1/turn/credentials?connection_id=conn-123", nil)
+	turnReq.Header.Set("Authorization", "Bearer test-secret-token-123456")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, turnReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for turn credentials, got %d", rr.Code)
+	}
+
 	// 4. Device list returns desktop host
 	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/devices", nil)
 	listReq.Header.Set("Authorization", "Bearer test-secret-token-123456")

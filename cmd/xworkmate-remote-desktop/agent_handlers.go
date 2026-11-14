@@ -22,9 +22,13 @@ func (s *Server) handleOAuthProviders(w http.ResponseWriter, r *http.Request) {
 
 // handleDeviceRegister handles DSH Remote device registration
 func (s *Server) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
+	id, _, _ := s.authenticateRequest(r, "")
 	token := extractRequestToken(r, "")
 	if len(token) < 16 {
 		token = "dev-" + strconv.FormatInt(time.Now().UnixNano(), 36) + "0123456789abcdef"
+	}
+	if id != nil {
+		s.cacheIdentity(token, id)
 	}
 	expTime := time.Now().Add(30 * 24 * time.Hour).UnixMilli()
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -37,9 +41,17 @@ func (s *Server) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 
 // handleAuthRefresh handles token rotation for DSH Remote
 func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
-	token := extractRequestToken(r, "")
+	var body struct {
+		RefreshToken string `json:"refreshToken"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	token := firstNonEmpty(body.RefreshToken, extractRequestToken(r, ""))
 	if len(token) < 16 {
 		token = "refresh-" + strconv.FormatInt(time.Now().UnixNano(), 36) + "0123456789abcdef"
+	}
+	id, _, _ := s.authenticateRequest(r, token)
+	if id != nil {
+		s.cacheIdentity(token, id)
 	}
 	expTime := time.Now().Add(30 * 24 * time.Hour).UnixMilli()
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -47,6 +59,24 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 		"accessTokenExpiresAt":  expTime,
 		"refreshToken":          token,
 		"refreshTokenExpiresAt": expTime,
+	})
+}
+
+// handleTurnCredentials returns ICE / TURN servers for WebRTC transport
+func (s *Server) handleTurnCredentials(w http.ResponseWriter, r *http.Request) {
+	var iceList []map[string]any
+	for _, srv := range s.cfg.ICEServers {
+		if strings.TrimSpace(srv) != "" {
+			iceList = append(iceList, map[string]any{
+				"urls": srv,
+			})
+		}
+	}
+	if iceList == nil {
+		iceList = []map[string]any{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"iceServers": iceList,
 	})
 }
 
@@ -73,6 +103,10 @@ func (s *Server) handleDevicesList(w http.ResponseWriter, r *http.Request) {
 // handleDeviceItem handles device sub-paths (/ice-servers, /presence, /self)
 func (s *Server) handleDeviceItem(w http.ResponseWriter, r *http.Request) {
 	path := strings.Trim(r.URL.Path, "/")
+	if strings.Contains(path, "register") {
+		s.handleDeviceRegister(w, r)
+		return
+	}
 	if strings.HasSuffix(path, "/self") && r.Method == http.MethodDelete {
 		w.WriteHeader(http.StatusNoContent)
 		return

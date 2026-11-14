@@ -1144,8 +1144,12 @@ func (s *Server) setupRoutes() *http.ServeMux {
 
 	// DSH Remote device registration & listing compatibility routes (Bearer only)
 	mux.HandleFunc("/api/v1/devices/register", s.apiAuthMiddleware(s.handleDeviceRegister))
+	mux.HandleFunc("/api/v1/devices/register-owned-role", s.apiAuthMiddleware(s.handleDeviceRegister))
+	mux.HandleFunc("/api/v1/devices/register-with-code", s.apiAuthMiddleware(s.handleDeviceRegister))
 	mux.HandleFunc("/api/v1/devices", s.apiAuthMiddleware(s.handleDevicesList))
 	mux.HandleFunc("/api/v1/devices/", s.apiAuthMiddleware(s.handleDeviceItem))
+	mux.HandleFunc("/api/v1/turn/credentials", s.apiAuthMiddleware(s.handleTurnCredentials))
+	mux.HandleFunc("/api/turn/credentials", s.apiAuthMiddleware(s.handleTurnCredentials))
 
 	// AI Agent Desktop APIs require Authorization: Bearer (cookie-only is rejected)
 	mux.HandleFunc("/api/desktop/info", s.apiAuthMiddleware(s.handleDesktopInfo))
