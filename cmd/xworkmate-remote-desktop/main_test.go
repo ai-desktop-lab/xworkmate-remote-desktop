@@ -543,6 +543,34 @@ func TestV1AuthCompatibilityAndDeviceAPIs(t *testing.T) {
 	if !ok || len(items) == 0 {
 		t.Fatalf("expected at least 1 device in items, got %v", listResp["items"])
 	}
+
+	// 5. Device presence
+	presenceReq := httptest.NewRequest(http.MethodGet, "/api/v1/devices/desktop-host/presence", nil)
+	presenceReq.Header.Set("Authorization", "Bearer test-secret-token-123456")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, presenceReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for presence, got %d", rr.Code)
+	}
+	var presResp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &presResp)
+	if presResp["online"] != true {
+		t.Fatalf("expected online=true in presence, got %v", presResp)
+	}
+
+	// 6. Device item inspection
+	devReq := httptest.NewRequest(http.MethodGet, "/api/v1/devices/desktop-host", nil)
+	devReq.Header.Set("Authorization", "Bearer test-secret-token-123456")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, devReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for device item, got %d", rr.Code)
+	}
+	var devResp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &devResp)
+	if devResp["role"] != "host" || devResp["deviceId"] != "desktop-host" {
+		t.Fatalf("unexpected device item: %v", devResp)
+	}
 }
 
 func TestAIAgentDesktopEndpoints(t *testing.T) {
@@ -754,7 +782,8 @@ func TestControlWebSocketRoute(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/control"
+	// 1. Dial /ws/v1/connect (the standard DSH Remote WebSocket endpoint)
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/v1/connect"
 	config, err := websocket.NewConfig(wsURL, "http://localhost")
 	if err != nil {
 		t.Fatalf("failed config: %v", err)
@@ -762,7 +791,7 @@ func TestControlWebSocketRoute(t *testing.T) {
 
 	ws, err := websocket.DialConfig(config)
 	if err != nil {
-		t.Fatalf("failed ws dial: %v", err)
+		t.Fatalf("failed ws dial to /ws/v1/connect: %v", err)
 	}
 	defer ws.Close()
 
@@ -786,5 +815,36 @@ func TestControlWebSocketRoute(t *testing.T) {
 	}
 	if ack.Type != "hello.ack" {
 		t.Fatalf("expected hello.ack, got %s", ack.Type)
+	}
+	if ack.ID == "" {
+		t.Fatalf("expected non-empty frame ID in hello.ack")
+	}
+	if ack.Timestamp <= 0 {
+		t.Fatalf("expected positive integer timestamp in hello.ack")
+	}
+
+	// 2. Test ping -> pong
+	ping := desktop.ControlFrame{
+		V:    1,
+		Type: "ping",
+		Payload: map[string]any{
+			"nonce": "test-nonce-123",
+		},
+	}
+	if err := websocket.JSON.Send(ws, ping); err != nil {
+		t.Fatalf("failed send ping: %v", err)
+	}
+	var pong desktop.ControlFrame
+	if err := websocket.JSON.Receive(ws, &pong); err != nil {
+		t.Fatalf("failed receive pong: %v", err)
+	}
+	if pong.Type != "pong" {
+		t.Fatalf("expected pong, got %s", pong.Type)
+	}
+	if pong.Payload["nonce"] != "test-nonce-123" {
+		t.Fatalf("expected nonce in pong, got %v", pong.Payload["nonce"])
+	}
+	if pong.ID == "" || pong.Timestamp <= 0 {
+		t.Fatalf("expected ID and Timestamp in pong")
 	}
 }

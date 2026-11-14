@@ -254,6 +254,7 @@ type Server struct {
 	httpClient *http.Client
 	mu         sync.Mutex
 	activeSess string
+	devices    map[string]map[string]any
 	authMu     sync.Mutex
 	authCache  map[string]authCacheEntry
 }
@@ -265,6 +266,7 @@ func NewServer(cfg Config) *Server {
 		agentCtrl:  desktop.NewAgentController(cfg.Display),
 		controlGw:  desktop.NewControlGateway(),
 		httpClient: &http.Client{Timeout: 5 * time.Second},
+		devices:    make(map[string]map[string]any),
 		authCache:  make(map[string]authCacheEntry),
 	}
 }
@@ -1140,6 +1142,8 @@ func (s *Server) setupRoutes() *http.ServeMux {
 
 	// WebSocket Control Gateway for DSH Remote
 	controlHandler := s.controlGw.Handler()
+	mux.Handle("/ws/v1/connect", controlHandler)
+	mux.Handle("/ws/v1/connect/", controlHandler)
 	mux.Handle("/api/control", controlHandler)
 	mux.Handle("/api/v1/control", controlHandler)
 

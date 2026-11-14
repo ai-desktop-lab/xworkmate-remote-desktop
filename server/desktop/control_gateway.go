@@ -14,10 +14,11 @@ import (
 )
 
 type ControlFrame struct {
-	V       int            `json:"v"`
-	ID      string         `json:"id,omitempty"`
-	Type    string         `json:"type"`
-	Payload map[string]any `json:"payload,omitempty"`
+	V         int            `json:"v"`
+	ID        string         `json:"id"`
+	Type      string         `json:"type"`
+	Timestamp int64          `json:"timestamp"`
+	Payload   map[string]any `json:"payload"`
 }
 
 type ControlPeer struct {
@@ -35,6 +36,15 @@ func (p *ControlPeer) Send(frame ControlFrame) error {
 	defer p.mu.Unlock()
 	if frame.V == 0 {
 		frame.V = 1
+	}
+	if frame.ID == "" {
+		frame.ID = "cf-" + randomHex(8)
+	}
+	if frame.Timestamp == 0 {
+		frame.Timestamp = time.Now().UnixMilli()
+	}
+	if frame.Payload == nil {
+		frame.Payload = make(map[string]any)
 	}
 	return websocket.JSON.Send(p.Conn, frame)
 }
@@ -122,8 +132,10 @@ func (g *ControlGateway) handleWebSocket(ws *websocket.Conn) {
 			log.Printf("[ControlGateway] Authenticated %s device: %s (version: %s)", role, deviceID, version)
 
 			_ = peer.Send(ControlFrame{
-				V:    1,
-				Type: "hello.ack",
+				V:         1,
+				ID:        "cf-" + randomHex(8),
+				Type:      "hello.ack",
+				Timestamp: time.Now().UnixMilli(),
 				Payload: map[string]any{
 					"protocol":                1,
 					"serverVersion":           "xworkmate/1.0.0",
@@ -140,10 +152,18 @@ func (g *ControlGateway) handleWebSocket(ws *websocket.Conn) {
 		case "ping":
 			if currentPeer != nil {
 				currentPeer.LastActive = time.Now()
+				nonce, _ := frame.Payload["nonce"].(string)
+				if nonce == "" {
+					nonce = randomHex(8)
+				}
 				_ = currentPeer.Send(ControlFrame{
-					V:       1,
-					Type:    "pong",
-					Payload: frame.Payload,
+					V:         1,
+					ID:        "cf-" + randomHex(8),
+					Type:      "pong",
+					Timestamp: time.Now().UnixMilli(),
+					Payload: map[string]any{
+						"nonce": nonce,
+					},
 				})
 			}
 
@@ -158,11 +178,29 @@ func (g *ControlGateway) handleWebSocket(ws *websocket.Conn) {
 			targetHost, ok := g.peers[targetID]
 			g.mu.RUnlock()
 
+			if targetHost == nil && (targetID == "desktop-host" || targetID == "") {
+				linkID := randomHex(16)
+				if currentPeer != nil {
+					_ = currentPeer.Send(ControlFrame{
+						V:         1,
+						ID:        "cf-" + randomHex(8),
+						Type:      "connect.accepted",
+						Timestamp: time.Now().UnixMilli(),
+						Payload: map[string]any{
+							"connectionId": linkID,
+						},
+					})
+				}
+				continue
+			}
+
 			if !ok || targetHost == nil {
 				if currentPeer != nil {
 					_ = currentPeer.Send(ControlFrame{
-						V:    1,
-						Type: "error",
+						V:         1,
+						ID:        "cf-" + randomHex(8),
+						Type:      "error",
+						Timestamp: time.Now().UnixMilli(),
 						Payload: map[string]any{
 							"code":      "HOST_OFFLINE",
 							"message":   "Host is offline.",
@@ -186,11 +224,14 @@ func (g *ControlGateway) handleWebSocket(ws *websocket.Conn) {
 			g.mu.Unlock()
 
 			_ = targetHost.Send(ControlFrame{
-				V:    1,
-				Type: "connect.incoming",
+				V:         1,
+				ID:        "cf-" + randomHex(8),
+				Type:      "connect.incoming",
+				Timestamp: time.Now().UnixMilli(),
 				Payload: map[string]any{
 					"connectionId":        linkID,
 					"clientDeviceId":      currentPeer.ID,
+					"clientIdentityKey":   "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 					"authorization":       "account",
 					"preferredTransports": []string{"lan", "p2p", "turn", "relay"},
 				},
@@ -214,6 +255,15 @@ func (g *ControlGateway) handleWebSocket(ws *websocket.Conn) {
 					otherPeer := g.peers[otherID]
 					g.mu.RUnlock()
 					if otherPeer != nil {
+						if frame.V == 0 {
+							frame.V = 1
+						}
+						if frame.ID == "" {
+							frame.ID = "cf-" + randomHex(8)
+						}
+						if frame.Timestamp == 0 {
+							frame.Timestamp = time.Now().UnixMilli()
+						}
 						_ = otherPeer.Send(frame)
 					}
 				}

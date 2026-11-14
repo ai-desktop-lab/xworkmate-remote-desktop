@@ -30,6 +30,42 @@ func (s *Server) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 	if id != nil {
 		s.cacheIdentity(token, id)
 	}
+
+	var req struct {
+		V      int `json:"v"`
+		Device struct {
+			Role         string `json:"role"`
+			DeviceID     string `json:"deviceId"`
+			Name         string `json:"name"`
+			Platform     string `json:"platform"`
+			IdentityKey  string `json:"identityKey"`
+			MembershipID string `json:"membershipId"`
+		} `json:"device"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Device.DeviceID != "" {
+		s.mu.Lock()
+		if s.devices == nil {
+			s.devices = make(map[string]map[string]any)
+		}
+		memID := firstNonEmpty(req.Device.MembershipID, req.Device.DeviceID)
+		identKey := firstNonEmpty(req.Device.IdentityKey, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+		role := firstNonEmpty(req.Device.Role, "client")
+		platform := firstNonEmpty(req.Device.Platform, "darwin")
+		name := firstNonEmpty(req.Device.Name, req.Device.DeviceID)
+		s.devices[req.Device.DeviceID] = map[string]any{
+			"deviceId":     req.Device.DeviceID,
+			"name":         name,
+			"role":         role,
+			"platform":     platform,
+			"identityKey":  identKey,
+			"membershipId": memID,
+			"online":       true,
+			"lastSeenAt":   time.Now().UnixMilli(),
+		}
+		s.mu.Unlock()
+	}
+
 	expTime := time.Now().Add(30 * 24 * time.Hour).UnixMilli()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"accessToken":           token,
@@ -119,21 +155,54 @@ func (s *Server) handleDeviceItem(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasSuffix(path, "/presence") {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"online": true,
+			"online":     true,
+			"lastSeenAt": time.Now().UnixMilli(),
 		})
 		return
 	}
-	wWidth, wHeight := s.agentCtrl.GetGeometry()
+
+	parts := strings.Split(path, "/")
+	targetDeviceID := parts[len(parts)-1]
+
+	s.mu.Lock()
+	cached, found := s.devices[targetDeviceID]
+	s.mu.Unlock()
+
+	if found && cached != nil {
+		writeJSON(w, http.StatusOK, cached)
+		return
+	}
+
+	if targetDeviceID == "desktop-host" {
+		wWidth, wHeight := s.agentCtrl.GetGeometry()
+		writeJSON(w, http.StatusOK, map[string]any{
+			"deviceId":       "desktop-host",
+			"name":           fmt.Sprintf("XWorkmate WebRTC Desktop (%dx%d)", wWidth, wHeight),
+			"role":           "host",
+			"platform":       "linux",
+			"identityKey":    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+			"online":         true,
+			"membershipId":   "desktop-host",
+			"harnessVersion": "1.0.0",
+			"clientVersion":  "1.0.0",
+			"lastSeenAt":     time.Now().UnixMilli(),
+		})
+		return
+	}
+
+	role := "client"
+	if strings.Contains(targetDeviceID, "host") {
+		role = "host"
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"deviceId":       "desktop-host",
-		"name":           fmt.Sprintf("XWorkmate WebRTC Desktop (%dx%d)", wWidth, wHeight),
-		"role":           "host",
-		"platform":       "linux",
-		"identityKey":    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-		"online":         true,
-		"membershipId":   "desktop-host",
-		"harnessVersion": "1.0.0",
-		"clientVersion":  "1.0.0",
+		"deviceId":     targetDeviceID,
+		"name":         targetDeviceID,
+		"role":         role,
+		"platform":     "darwin",
+		"identityKey":  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"membershipId": targetDeviceID,
+		"online":       true,
+		"lastSeenAt":   time.Now().UnixMilli(),
 	})
 }
 
