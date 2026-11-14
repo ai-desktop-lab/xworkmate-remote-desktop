@@ -119,20 +119,28 @@ func (s *Server) handleTurnCredentials(w http.ResponseWriter, r *http.Request) {
 // handleDevicesList lists this desktop host as an available remote device
 func (s *Server) handleDevicesList(w http.ResponseWriter, r *http.Request) {
 	wWidth, wHeight := s.agentCtrl.GetGeometry()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"items": []map[string]any{
-			{
-				"deviceId":       "desktop-host",
-				"name":           fmt.Sprintf("XWorkmate WebRTC Desktop (%dx%d)", wWidth, wHeight),
-				"role":           "host",
-				"platform":       "linux",
-				"identityKey":    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-				"online":         true,
-				"membershipId":   "desktop-host",
-				"harnessVersion": "1.0.0",
-				"clientVersion":  "1.0.0",
-			},
+	items := []map[string]any{
+		{
+			"deviceId":       "desktop-host",
+			"name":           fmt.Sprintf("XWorkmate WebRTC Desktop (%dx%d)", wWidth, wHeight),
+			"role":           "host",
+			"platform":       "linux",
+			"identityKey":    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+			"online":         true,
+			"membershipId":   "desktop-host",
+			"harnessVersion": "1.0.0",
+			"clientVersion":  "1.0.0",
 		},
+	}
+	s.mu.Lock()
+	for id, dev := range s.devices {
+		if id != "desktop-host" {
+			items = append(items, dev)
+		}
+	}
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": items,
 	})
 }
 

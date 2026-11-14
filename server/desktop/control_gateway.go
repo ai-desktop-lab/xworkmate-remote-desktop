@@ -64,10 +64,39 @@ type ControlGateway struct {
 }
 
 func NewControlGateway() *ControlGateway {
-	return &ControlGateway{
+	gw := &ControlGateway{
 		peers: make(map[string]*ControlPeer),
 		links: make(map[string]*ControlLink),
 	}
+	gw.startHeartbeat()
+	return gw
+}
+
+func (g *ControlGateway) startHeartbeat() {
+	go func() {
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			g.mu.RLock()
+			peers := make([]*ControlPeer, 0, len(g.peers))
+			for _, p := range g.peers {
+				peers = append(peers, p)
+			}
+			g.mu.RUnlock()
+
+			for _, p := range peers {
+				_ = p.Send(ControlFrame{
+					V:         1,
+					ID:        "cf-" + randomHex(8),
+					Type:      "ping",
+					Timestamp: time.Now().UnixMilli(),
+					Payload: map[string]any{
+						"nonce": randomHex(8),
+					},
+				})
+			}
+		}
+	}()
 }
 
 func randomHex(bytes int) string {
@@ -116,12 +145,41 @@ func (g *ControlGateway) handleWebSocket(ws *websocket.Conn) {
 				deviceID = "dev-" + randomHex(8)
 			}
 
+			var offeredCaps []string
+			if rawCaps, ok := frame.Payload["capabilities"].([]any); ok {
+				for _, c := range rawCaps {
+					if s, ok := c.(string); ok && s != "" {
+						offeredCaps = append(offeredCaps, s)
+					}
+				}
+			} else if strCaps, ok := frame.Payload["capabilities"].([]string); ok {
+				offeredCaps = strCaps
+			}
+
+			serverSupportedTransports := []string{"transport.lan", "transport.p2p", "transport.turn", "transport.relay"}
+			var negotiated []string
+			if len(offeredCaps) > 0 {
+				offeredSet := make(map[string]bool, len(offeredCaps))
+				for _, c := range offeredCaps {
+					offeredSet[c] = true
+				}
+				for _, supported := range serverSupportedTransports {
+					if offeredSet[supported] {
+						negotiated = append(negotiated, supported)
+					}
+				}
+			}
+			if len(negotiated) == 0 {
+				negotiated = []string{"transport.relay"}
+			}
+
 			peer := &ControlPeer{
-				ID:         deviceID,
-				Role:       role,
-				Version:    version,
-				Conn:       ws,
-				LastActive: time.Now(),
+				ID:           deviceID,
+				Role:         role,
+				Version:      version,
+				Capabilities: negotiated,
+				Conn:         ws,
+				LastActive:   time.Now(),
 			}
 
 			g.mu.Lock()
@@ -129,7 +187,7 @@ func (g *ControlGateway) handleWebSocket(ws *websocket.Conn) {
 			g.mu.Unlock()
 			currentPeer = peer
 
-			log.Printf("[ControlGateway] Authenticated %s device: %s (version: %s)", role, deviceID, version)
+			log.Printf("[ControlGateway] Authenticated %s device: %s (version: %s, capabilities: %v)", role, deviceID, version, negotiated)
 
 			_ = peer.Send(ControlFrame{
 				V:         1,
@@ -143,7 +201,7 @@ func (g *ControlGateway) handleWebSocket(ws *websocket.Conn) {
 					"heartbeatIntervalMs":     25000,
 					"maxControlFrameBytes":    131072,
 					"maxRelayFrameBytes":      1048576,
-					"capabilities":            []string{"transport.lan", "transport.p2p", "transport.turn", "transport.relay"},
+					"capabilities":            negotiated,
 					"webrtcEnabled":           true,
 					"webrtcFallbackTimeoutMs": 12000,
 				},
@@ -275,6 +333,11 @@ func (g *ControlGateway) handleWebSocket(ws *websocket.Conn) {
 		g.mu.Lock()
 		if g.peers[currentPeer.ID] == currentPeer {
 			delete(g.peers, currentPeer.ID)
+		}
+		for linkID, link := range g.links {
+			if link.HostID == currentPeer.ID || link.ClientID == currentPeer.ID {
+				delete(g.links, linkID)
+			}
 		}
 		g.mu.Unlock()
 		log.Printf("[ControlGateway] Disconnected %s device: %s", currentPeer.Role, currentPeer.ID)
