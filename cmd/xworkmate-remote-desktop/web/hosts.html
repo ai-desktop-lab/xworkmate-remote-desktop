@@ -381,7 +381,12 @@
     async function fetchDevices() {
       const tbody = document.getElementById('devices-tbody');
       try {
-        const res = await fetch('/api/v1/devices');
+        const headers = {};
+        const token = localStorage.getItem('token') || localStorage.getItem('dsh_token');
+        if (token) {
+          headers['Authorization'] = 'Bearer ' + token;
+        }
+        const res = await fetch('/api/v1/devices', { headers });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         const items = data.items || [];

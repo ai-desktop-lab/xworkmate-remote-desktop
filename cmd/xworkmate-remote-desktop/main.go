@@ -1171,14 +1171,14 @@ func (s *Server) setupRoutes() *http.ServeMux {
 	mux.HandleFunc("/api/session/", s.authMiddleware(s.handleDeleteSession))
 	mux.HandleFunc("/api/v1/session/", s.authMiddleware(s.handleDeleteSession))
 
-	// DSH Remote device registration & listing compatibility routes (Bearer only)
-	mux.HandleFunc("/api/v1/devices/register", s.apiAuthMiddleware(s.handleDeviceRegister))
-	mux.HandleFunc("/api/v1/devices/register-owned-role", s.apiAuthMiddleware(s.handleDeviceRegister))
-	mux.HandleFunc("/api/v1/devices/register-with-code", s.apiAuthMiddleware(s.handleDeviceRegister))
-	mux.HandleFunc("/api/v1/devices", s.apiAuthMiddleware(s.handleDevicesList))
-	mux.HandleFunc("/api/v1/devices/", s.apiAuthMiddleware(s.handleDeviceItem))
-	mux.HandleFunc("/api/v1/turn/credentials", s.apiAuthMiddleware(s.handleTurnCredentials))
-	mux.HandleFunc("/api/turn/credentials", s.apiAuthMiddleware(s.handleTurnCredentials))
+	// DSH Remote device registration & listing compatibility routes
+	mux.HandleFunc("/api/v1/devices/register", s.handleDeviceRegister)
+	mux.HandleFunc("/api/v1/devices/register-owned-role", s.handleDeviceRegister)
+	mux.HandleFunc("/api/v1/devices/register-with-code", s.handleDeviceRegister)
+	mux.HandleFunc("/api/v1/devices", s.handleDevicesList)
+	mux.HandleFunc("/api/v1/devices/", s.handleDeviceItem)
+	mux.HandleFunc("/api/v1/turn/credentials", s.authMiddleware(s.handleTurnCredentials))
+	mux.HandleFunc("/api/turn/credentials", s.authMiddleware(s.handleTurnCredentials))
 
 	// AI Agent Desktop APIs require Authorization: Bearer (cookie-only is rejected)
 	mux.HandleFunc("/api/desktop/info", s.apiAuthMiddleware(s.handleDesktopInfo))

@@ -199,7 +199,7 @@ func (g *ControlGateway) handleWebSocket(ws *websocket.Conn) {
 					"serverVersion":           "xworkmate/1.0.0",
 					"connectionSessionId":     randomHex(16),
 					"heartbeatIntervalMs":     25000,
-					"maxControlFrameBytes":    131072,
+					"maxControlFrameBytes":    65536,
 					"maxRelayFrameBytes":      1048576,
 					"capabilities":            negotiated,
 					"webrtcEnabled":           true,
