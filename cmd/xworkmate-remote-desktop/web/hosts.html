@@ -340,7 +340,7 @@
         <h3>🔗 授权服务域名</h3>
         <p>在 DeepSeek Harness Remote 插件设置中填入以下授权域名即可自动接入：</p>
         <div class="code-box">
-          <span id="domain-text">https://rdm.svc.plus</span>
+          <span id="domain-text">https://rdm.svc.plus/app/hosts</span>
           <button class="copy-btn" onclick="copyDomain()">复制</button>
         </div>
       </div>
@@ -399,8 +399,9 @@
 
         tbody.innerHTML = items.map(dev => {
           const isOnline = dev.online !== false;
-          const desktopDomain = dev.desktopDomain || ('desktop-' + (dev.desktopNameId || 'host') + '.svc.plus');
-          const desktopUrl = dev.desktopUrl || ('https://' + desktopDomain);
+          const isHost = dev.deviceId === 'desktop-host' || dev.desktopNameId === 'host';
+          const desktopDomain = dev.desktopDomain || (isHost ? 'desktop.svc.plus' : ('desktop-' + (dev.desktopNameId || 'host') + '.svc.plus'));
+          const desktopUrl = dev.desktopUrl || (isHost ? 'https://desktop.svc.plus' : ('https://' + desktopDomain));
           const nameIdTag = dev.desktopNameId ? ('desktop-' + dev.desktopNameId) : dev.deviceId;
           return `
             <tr>

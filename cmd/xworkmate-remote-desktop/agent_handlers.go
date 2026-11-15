@@ -152,9 +152,14 @@ func (s *Server) collectAllDevices() []map[string]any {
 		desktopDomain := fmt.Sprintf("desktop-%s.svc.plus", nameID)
 		items[i]["desktopNameId"] = nameID
 		items[i]["nameId"] = nameID
-		items[i]["desktopDomain"] = desktopDomain
-		items[i]["desktopUrl"] = "https://" + desktopDomain
-		items[i]["rdmUrl"] = "https://rdm.svc.plus"
+		if nameID == "host" || devID == "desktop-host" {
+			items[i]["desktopDomain"] = "desktop.svc.plus"
+			items[i]["desktopUrl"] = "https://desktop.svc.plus"
+		} else {
+			items[i]["desktopDomain"] = desktopDomain
+			items[i]["desktopUrl"] = "https://" + desktopDomain
+		}
+		items[i]["rdmUrl"] = "https://rdm.svc.plus/app/hosts"
 	}
 
 	return items
