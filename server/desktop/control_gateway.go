@@ -99,6 +99,16 @@ func (g *ControlGateway) startHeartbeat() {
 	}()
 }
 
+func (g *ControlGateway) GetPeers() []*ControlPeer {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	peers := make([]*ControlPeer, 0, len(g.peers))
+	for _, p := range g.peers {
+		peers = append(peers, p)
+	}
+	return peers
+}
+
 func randomHex(bytes int) string {
 	b := make([]byte, bytes)
 	_, _ = rand.Read(b)

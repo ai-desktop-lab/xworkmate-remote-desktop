@@ -44,8 +44,8 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleAccountDevices returns devices list with serverUrl and transport
-func (s *Server) handleAccountDevices(w http.ResponseWriter, r *http.Request) {
+// collectAllDevices aggregates desktop-host, registered devices, and active WebSocket control peers
+func (s *Server) collectAllDevices() []map[string]any {
 	wWidth, wHeight := s.agentCtrl.GetGeometry()
 	items := []map[string]any{
 		{
@@ -60,14 +60,53 @@ func (s *Server) handleAccountDevices(w http.ResponseWriter, r *http.Request) {
 			"clientVersion":  "1.0.0",
 		},
 	}
+	seen := map[string]bool{"desktop-host": true}
+
 	s.mu.Lock()
 	for id, dev := range s.devices {
-		if id != "desktop-host" {
+		if !seen[id] {
+			seen[id] = true
 			items = append(items, dev)
 		}
 	}
 	s.mu.Unlock()
 
+	if s.controlGw != nil {
+		for _, peer := range s.controlGw.GetPeers() {
+			if !seen[peer.ID] {
+				seen[peer.ID] = true
+				name := peer.ID
+				platform := "darwin"
+				s.mu.Lock()
+				if cached, ok := s.devices[peer.ID]; ok {
+					if cName, ok := cached["name"].(string); ok && cName != "" {
+						name = cName
+					}
+					if cPlat, ok := cached["platform"].(string); ok && cPlat != "" {
+						platform = cPlat
+					}
+				}
+				s.mu.Unlock()
+				items = append(items, map[string]any{
+					"deviceId":       peer.ID,
+					"name":           name,
+					"role":           peer.Role,
+					"platform":       platform,
+					"identityKey":    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+					"online":         true,
+					"membershipId":   peer.ID,
+					"harnessVersion": "1.0.0",
+					"clientVersion":  peer.Version,
+				})
+			}
+		}
+	}
+	return items
+}
+
+// handleAccountDevices returns devices list with serverUrl and transport
+func (s *Server) handleAccountDevices(w http.ResponseWriter, r *http.Request) {
+	items := s.collectAllDevices()
 	serverURL := "https://desktop.svc.plus"
 	if s.cfg.LoginURL != "" {
 		serverURL = s.cfg.LoginURL
@@ -177,27 +216,7 @@ func (s *Server) handleTurnCredentials(w http.ResponseWriter, r *http.Request) {
 
 // handleDevicesList lists this desktop host as an available remote device
 func (s *Server) handleDevicesList(w http.ResponseWriter, r *http.Request) {
-	wWidth, wHeight := s.agentCtrl.GetGeometry()
-	items := []map[string]any{
-		{
-			"deviceId":       "desktop-host",
-			"name":           fmt.Sprintf("XWorkmate WebRTC Desktop (%dx%d)", wWidth, wHeight),
-			"role":           "host",
-			"platform":       "linux",
-			"identityKey":    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-			"online":         true,
-			"membershipId":   "desktop-host",
-			"harnessVersion": "1.0.0",
-			"clientVersion":  "1.0.0",
-		},
-	}
-	s.mu.Lock()
-	for id, dev := range s.devices {
-		if id != "desktop-host" {
-			items = append(items, dev)
-		}
-	}
-	s.mu.Unlock()
+	items := s.collectAllDevices()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items": items,
 	})
