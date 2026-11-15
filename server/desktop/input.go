@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,6 +32,8 @@ type XdotoolInjector struct {
 	display   string
 	width     int
 	height    int
+	lastX     int
+	lastY     int
 	isStarted bool
 
 	moveMu      sync.Mutex
@@ -49,7 +52,7 @@ func NewXdotoolInjector(display string) *XdotoolInjector {
 	}
 }
 
-// Start launches xdotool and queries screen resolution
+// Start launches xdotool on Linux or initializes native input dispatch on macOS/Windows and queries screen resolution
 func (xi *XdotoolInjector) Start() error {
 	xi.mu.Lock()
 	defer xi.mu.Unlock()
@@ -63,12 +66,22 @@ func (xi *XdotoolInjector) Start() error {
 	if err == nil {
 		xi.width = w
 		xi.height = h
-		log.Printf("Detected remote display geometry: %dx%d on %s", w, h, xi.display)
+		log.Printf("Detected remote display geometry: %dx%d on %s (%s)", w, h, xi.display, runtime.GOOS)
 	} else {
 		log.Printf("Warning: Failed to query display geometry: %v. Using default: %dx%d", err, xi.width, xi.height)
 	}
 
-	// 2. Launch persistent xdotool process
+	// 2. On non-Linux (macOS / Windows), native input commands are invoked directly without xdotool
+	if runtime.GOOS != "linux" {
+		xi.isStarted = true
+		if xi.stopChan == nil {
+			xi.stopChan = make(chan struct{})
+			go xi.mouseMoveWorker()
+		}
+		return nil
+	}
+
+	// 3. On Linux, launch persistent xdotool process
 	cmd := exec.Command("xdotool", "-")
 	cmd.Env = desktopCommandEnv(xi.display)
 
@@ -94,24 +107,35 @@ func (xi *XdotoolInjector) Start() error {
 	return nil
 }
 
-// Inject sends a command to the persistent xdotool process
+// Inject sends a command to the persistent xdotool process on Linux or native OS handler on macOS/Windows
 func (xi *XdotoolInjector) Inject(event InputEvent) error {
 	xi.mu.Lock()
-	if !xi.isStarted || xi.stdin == nil {
+	if !xi.isStarted || (runtime.GOOS == "linux" && xi.stdin == nil) {
 		xi.mu.Unlock()
 		return fmt.Errorf("injector is not running")
 	}
 
-	var cmdStr string
-
-	switch event.Type {
-	case "mouse_move":
+	if event.Type == "mouse_move" {
 		xi.moveMu.Lock()
 		xi.pendingMove = &event
 		xi.moveMu.Unlock()
 		xi.mu.Unlock()
 		return nil
+	}
 
+	if runtime.GOOS != "linux" {
+		w, h, lx, ly := xi.width, xi.height, xi.lastX, xi.lastY
+		if event.X > 0 || event.Y > 0 {
+			xi.lastX = int(event.X * float64(w))
+			xi.lastY = int(event.Y * float64(h))
+		}
+		xi.mu.Unlock()
+		return injectNativeInputOS(event, w, h, lx, ly)
+	}
+
+	var cmdStr string
+
+	switch event.Type {
 	case "mouse_down":
 		btn := xi.mapButton(event.Button)
 		cmdStr = fmt.Sprintf("mousedown %d\n", btn)
@@ -207,12 +231,21 @@ func (xi *XdotoolInjector) mouseMoveWorker() {
 
 			if event != nil {
 				xi.mu.Lock()
-				if xi.isStarted && xi.stdin != nil {
+				if xi.isStarted {
 					absX := int(event.X * float64(xi.width))
 					absY := int(event.Y * float64(xi.height))
-					cmdStr := fmt.Sprintf("mousemove %d %d\n", absX, absY)
-					if _, err := xi.stdin.Write([]byte(cmdStr)); err != nil {
-						log.Printf("xdotool mousemove write error: %v", err)
+					xi.lastX = absX
+					xi.lastY = absY
+					if runtime.GOOS != "linux" {
+						w, h := xi.width, xi.height
+						xi.mu.Unlock()
+						_ = injectNativeInputOS(*event, w, h, absX, absY)
+						continue
+					} else if xi.stdin != nil {
+						cmdStr := fmt.Sprintf("mousemove %d %d\n", absX, absY)
+						if _, err := xi.stdin.Write([]byte(cmdStr)); err != nil {
+							log.Printf("xdotool mousemove write error: %v", err)
+						}
 					}
 				}
 				xi.mu.Unlock()
@@ -226,25 +259,7 @@ func (xi *XdotoolInjector) queryDisplayGeometry() (int, int, error) {
 }
 
 func queryDisplayGeometry(display string) (int, int, error) {
-	cmd := exec.Command("xdotool", "getdisplaygeometry")
-	cmd.Env = desktopCommandEnv(display)
-	out, err := cmd.Output()
-	if err != nil {
-		return 0, 0, err
-	}
-
-	parts := strings.Fields(string(out))
-	if len(parts) < 2 {
-		return 0, 0, fmt.Errorf("invalid geometry output: %s", string(out))
-	}
-
-	w, err1 := strconv.Atoi(parts[0])
-	h, err2 := strconv.Atoi(parts[1])
-	if err1 != nil || err2 != nil {
-		return 0, 0, fmt.Errorf("failed to parse geometry: %w, %w", err1, err2)
-	}
-
-	return w, h, nil
+	return queryDisplayGeometryByOS(display)
 }
 
 func ResolveDesktopDisplay(requested string) string {

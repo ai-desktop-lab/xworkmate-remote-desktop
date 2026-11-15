@@ -7,7 +7,10 @@ import (
 )
 
 func TestResolveCoordsNormalizedAndAbsolute(t *testing.T) {
-	ac := &AgentController{display: ":0.0"}
+	ac := &AgentController{
+		display:  ":0.0",
+		injector: &XdotoolInjector{width: 1280, height: 720},
+	}
 
 	// Test normalized coordinates [0.5, 0.5] on 1280x720 default
 	x5 := 0.5
@@ -155,7 +158,10 @@ func TestCoordIsNormalizedAutoAndOverrides(t *testing.T) {
 }
 
 func TestResolveCoordsIntegerPixelsAndNormalized(t *testing.T) {
-	ac := &AgentController{display: ":0.0"} // geometry falls back to 1280x720
+	ac := &AgentController{
+		display:  ":0.0",
+		injector: &XdotoolInjector{width: 1280, height: 720},
+	}
 
 	assertXY := func(name string, x, y float64, mode string, flag *bool, wantX, wantY int) {
 		t.Helper()

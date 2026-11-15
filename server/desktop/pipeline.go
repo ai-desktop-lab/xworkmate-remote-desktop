@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -55,13 +56,14 @@ type PipelineManager struct {
 }
 
 type PipelineConfig struct {
-	Display  string // e.g. ":0"
+	Platform string // optional override ("linux", "darwin", "windows"); defaults to runtime.GOOS
+	Display  string // e.g. ":0" on Linux, "Capture screen 0:none" on macOS, "desktop" on Windows
 	Port     int    // e.g. 5004
 	Width    int    // e.g. 1920
 	Height   int    // e.g. 1080
 	FPS      int    // e.g. 30
 	Bitrate  int    // in kbps, e.g. 2000
-	UseGPU   bool   // try using hardware accelerated encoding (nvh264enc / h264_nvenc)
+	UseGPU   bool   // try using hardware accelerated encoding (nvh264enc / h264_nvenc / vtenc_h264)
 	ToolType string // "gstreamer" or "ffmpeg" or "auto"
 }
 
@@ -185,12 +187,40 @@ func (pm *PipelineManager) hasExecutable(name string) bool {
 	return err == nil
 }
 
+func resolveTargetOS(platform string) string {
+	p := strings.ToLower(strings.TrimSpace(platform))
+	if p == "" {
+		return runtime.GOOS
+	}
+	switch p {
+	case "macos", "osx", "mac":
+		return "darwin"
+	case "win", "win32", "win64":
+		return "windows"
+	default:
+		return p
+	}
+}
+
 func (pm *PipelineManager) buildGStreamer(cfg PipelineConfig) (string, []string, error) {
 	cfg = normalizePipelineConfig(cfg)
+	targetOS := resolveTargetOS(cfg.Platform)
 	var pipelineParts []string
 
-	// 1. Capture Source (X11)
-	pipelineParts = append(pipelineParts, fmt.Sprintf("ximagesrc display-name=%s", cfg.Display))
+	// 1. Capture Source by OS
+	switch targetOS {
+	case "darwin":
+		pipelineParts = append(pipelineParts, "avfvideosrc capture-screen=true capture-screen-cursor=true")
+	case "windows":
+		pipelineParts = append(pipelineParts, "d3d11screencapturesrc show-cursor=true")
+	default:
+		display := cfg.Display
+		if display == "" {
+			display = ":0.0"
+		}
+		pipelineParts = append(pipelineParts, fmt.Sprintf("ximagesrc display-name=%s", display))
+	}
+
 	pipelineParts = append(pipelineParts, fmt.Sprintf("video/x-raw,framerate=%d/1", cfg.FPS))
 	pipelineParts = append(pipelineParts, "videoconvert")
 	pipelineParts = append(pipelineParts, "videoscale")
@@ -202,9 +232,11 @@ func (pm *PipelineManager) buildGStreamer(cfg PipelineConfig) (string, []string,
 	// 2. Encoder
 	encoderStr := "x264enc speed-preset=ultrafast tune=zerolatency bitrate=" + fmt.Sprintf("%d", cfg.Bitrate) + " byte-stream=true key-int-max=30"
 	if cfg.UseGPU {
-		// Detect if nvcodec is present by calling gst-inspect-1.0 or simply attempting it.
-		// We'll default to nvh264enc.
-		encoderStr = "nvh264enc bitrate=" + fmt.Sprintf("%d", cfg.Bitrate) + " preset=low-latency gop-size=30"
+		if targetOS == "darwin" {
+			encoderStr = "vtenc_h264 bitrate=" + fmt.Sprintf("%d", cfg.Bitrate) + " realtime=true allow-frame-reordering=false max-keyframe-interval=30"
+		} else {
+			encoderStr = "nvh264enc bitrate=" + fmt.Sprintf("%d", cfg.Bitrate) + " preset=low-latency gop-size=30"
+		}
 	}
 	pipelineParts = append(pipelineParts, encoderStr)
 
@@ -231,23 +263,67 @@ func (pm *PipelineManager) buildGStreamer(cfg PipelineConfig) (string, []string,
 
 func (pm *PipelineManager) buildFFmpeg(cfg PipelineConfig) (string, []string, error) {
 	cfg = normalizePipelineConfig(cfg)
-	args := []string{
-		"-f", "x11grab",
-		"-draw_mouse", "1",
-		"-framerate", fmt.Sprintf("%d", cfg.FPS),
-		"-video_size", fmt.Sprintf("%dx%d", cfg.Width, cfg.Height),
-		"-i", cfg.Display,
+	targetOS := resolveTargetOS(cfg.Platform)
+	var args []string
+
+	switch targetOS {
+	case "darwin":
+		input := cfg.Display
+		if input == "" || strings.HasPrefix(input, ":") {
+			input = "Capture screen 0:none"
+		}
+		args = []string{
+			"-f", "avfoundation",
+			"-capture_cursor", "1",
+			"-framerate", fmt.Sprintf("%d", cfg.FPS),
+			"-pixel_format", "uyvy422",
+			"-i", input,
+			"-vf", fmt.Sprintf("scale=%d:%d", cfg.Width, cfg.Height),
+		}
+	case "windows":
+		input := cfg.Display
+		if input == "" || strings.HasPrefix(input, ":") {
+			input = "desktop"
+		}
+		args = []string{
+			"-f", "gdigrab",
+			"-draw_mouse", "1",
+			"-framerate", fmt.Sprintf("%d", cfg.FPS),
+			"-video_size", fmt.Sprintf("%dx%d", cfg.Width, cfg.Height),
+			"-i", input,
+		}
+	default:
+		display := cfg.Display
+		if display == "" {
+			display = ":0.0"
+		}
+		args = []string{
+			"-f", "x11grab",
+			"-draw_mouse", "1",
+			"-framerate", fmt.Sprintf("%d", cfg.FPS),
+			"-video_size", fmt.Sprintf("%dx%d", cfg.Width, cfg.Height),
+			"-i", display,
+		}
 	}
 
 	// Encoder config
 	if cfg.UseGPU {
-		args = append(args,
-			"-c:v", "h264_nvenc",
-			"-preset", "llhp", // low latency high quality
-			"-tune", "zerolatency",
-			"-g", "30",
-			"-pix_fmt", "yuv420p",
-		)
+		if targetOS == "darwin" {
+			args = append(args,
+				"-c:v", "h264_videotoolbox",
+				"-realtime", "1",
+				"-g", "30",
+				"-pix_fmt", "yuv420p",
+			)
+		} else {
+			args = append(args,
+				"-c:v", "h264_nvenc",
+				"-preset", "llhp", // low latency high quality
+				"-tune", "zerolatency",
+				"-g", "30",
+				"-pix_fmt", "yuv420p",
+			)
+		}
 	} else {
 		args = append(args,
 			"-c:v", "libx264",

@@ -87,10 +87,11 @@ func TestBuildFFmpegUsesBrowserFriendlyH264(t *testing.T) {
 func TestBuildGStreamerUseGPUSelectsNVENC(t *testing.T) {
 	pm := NewPipelineManager()
 	_, args, err := pm.buildGStreamer(PipelineConfig{
-		Display: ":11.0",
-		Port:    5004,
-		Bitrate: 2000,
-		UseGPU:  true,
+		Platform: "linux",
+		Display:  ":11.0",
+		Port:     5004,
+		Bitrate:  2000,
+		UseGPU:   true,
 	})
 	if err != nil {
 		t.Fatalf("buildGStreamer: %v", err)
@@ -107,13 +108,14 @@ func TestBuildGStreamerUseGPUSelectsNVENC(t *testing.T) {
 func TestBuildFFmpegUseGPUSelectsNVENC(t *testing.T) {
 	pm := NewPipelineManager()
 	_, args, err := pm.buildFFmpeg(PipelineConfig{
-		Display: ":11.0",
-		Port:    5004,
-		Width:   1280,
-		Height:  720,
-		FPS:     30,
-		Bitrate: 2000,
-		UseGPU:  true,
+		Platform: "linux",
+		Display:  ":11.0",
+		Port:     5004,
+		Width:    1280,
+		Height:   720,
+		FPS:      30,
+		Bitrate:  2000,
+		UseGPU:   true,
 	})
 	if err != nil {
 		t.Fatalf("buildFFmpeg: %v", err)
@@ -121,5 +123,45 @@ func TestBuildFFmpegUseGPUSelectsNVENC(t *testing.T) {
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "h264_nvenc") {
 		t.Fatalf("expected h264_nvenc when UseGPU=true, got %s", joined)
+	}
+}
+
+func TestBuildCrossPlatformPipelines(t *testing.T) {
+	pm := NewPipelineManager()
+
+	// macOS GStreamer
+	_, macGst, err := pm.buildGStreamer(PipelineConfig{Platform: "darwin", Port: 5004})
+	if err != nil {
+		t.Fatalf("macOS buildGStreamer: %v", err)
+	}
+	if !strings.Contains(strings.Join(macGst, " "), "avfvideosrc capture-screen=true") {
+		t.Fatalf("expected avfvideosrc for darwin, got %v", macGst)
+	}
+
+	// macOS FFmpeg
+	_, macFF, err := pm.buildFFmpeg(PipelineConfig{Platform: "darwin", Port: 5004})
+	if err != nil {
+		t.Fatalf("macOS buildFFmpeg: %v", err)
+	}
+	if !strings.Contains(strings.Join(macFF, " "), "-f avfoundation") {
+		t.Fatalf("expected avfoundation for darwin, got %v", macFF)
+	}
+
+	// Windows GStreamer
+	_, winGst, err := pm.buildGStreamer(PipelineConfig{Platform: "windows", Port: 5004})
+	if err != nil {
+		t.Fatalf("windows buildGStreamer: %v", err)
+	}
+	if !strings.Contains(strings.Join(winGst, " "), "d3d11screencapturesrc show-cursor=true") {
+		t.Fatalf("expected d3d11screencapturesrc for windows, got %v", winGst)
+	}
+
+	// Windows FFmpeg
+	_, winFF, err := pm.buildFFmpeg(PipelineConfig{Platform: "windows", Port: 5004})
+	if err != nil {
+		t.Fatalf("windows buildFFmpeg: %v", err)
+	}
+	if !strings.Contains(strings.Join(winFF, " "), "-f gdigrab") {
+		t.Fatalf("expected gdigrab for windows, got %v", winFF)
 	}
 }

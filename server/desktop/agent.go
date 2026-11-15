@@ -145,6 +145,9 @@ func (ac *AgentController) Close() error {
 
 // GetGeometry returns width and height of the display
 func (ac *AgentController) GetGeometry() (int, int) {
+	if ac.injector != nil && ac.injector.width > 0 && ac.injector.height > 0 {
+		return ac.injector.width, ac.injector.height
+	}
 	w, h, err := queryDisplayGeometry(ac.display)
 	if err == nil && w > 0 && h > 0 {
 		return w, h
