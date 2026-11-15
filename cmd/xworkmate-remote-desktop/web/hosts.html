@@ -277,8 +277,8 @@
         <svg viewBox="0 0 24 24"><path d="M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm1 3v6h14V9H5zm3 10h8v2H8v-2z"/></svg>
       </div>
       <div>
-        <div class="brand-title">XWorkmate Remote Desktop</div>
-        <div class="brand-sub">DS Harness Remote 工作台接入中心</div>
+        <div class="brand-title">Remote Desktop Management · RDM</div>
+        <div class="brand-sub">rdm.svc.plus · 统一远程桌面管理中心</div>
       </div>
     </a>
     <div class="header-actions">
@@ -286,9 +286,9 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
         刷新列表
       </button>
-      <a href="/" class="btn btn-primary">
+      <a href="https://rdm.svc.plus" class="btn btn-primary">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-        打开图形桌面
+        RDM 管理主页
       </a>
     </div>
   </header>
@@ -296,13 +296,13 @@
   <main>
     <div class="hero-card">
       <div class="hero-content">
-        <h1>设备与主机管理 (Host Management)</h1>
-        <p>统一管理注册至当前授权域名的 Remote Desktop 与 DSH Remote 主机。支持跨平台（macOS / Linux / Windows）互联互通。</p>
+        <h1>远程桌面管理系统 (Remote Desktop Management)</h1>
+        <p>统一接入与管理平台远程桌面与工作台。默认管理入口：<strong>https://rdm.svc.plus</strong>（全称 remote-desktop-management.svc.plus）。每个远程桌面均分配单独专属域名 <strong>desktop-&lt;name-id&gt;.svc.plus</strong>。</p>
       </div>
       <div class="status-summary">
         <div class="summary-box">
           <div class="num" id="total-hosts">-</div>
-          <div class="lbl">可用主机数</div>
+          <div class="lbl">可用桌面数</div>
         </div>
         <div class="summary-box">
           <div class="num" id="online-hosts" style="color: var(--success);">-</div>
@@ -313,17 +313,17 @@
 
     <div>
       <div class="section-title">
-        <span>已注册设备与主机列表</span>
+        <span>已分配桌面与主机列表</span>
         <span id="last-updated" style="font-size: 11px; text-transform: none;"></span>
       </div>
       <div class="device-table-container">
         <table>
           <thead>
             <tr>
-              <th>主机名称 / 设备</th>
-              <th>操作系统 / 平台</th>
+              <th>远程桌面 / 主机</th>
+              <th>专属域名 (desktop-&lt;name-id&gt;)</th>
+              <th>平台</th>
               <th>角色</th>
-              <th>协议 / 版本</th>
               <th>状态</th>
               <th>快捷操作</th>
             </tr>
@@ -331,7 +331,7 @@
           <tbody id="devices-tbody">
             <tr>
               <td colspan="6" style="text-align: center; padding: 32px; color: var(--text-muted);">
-                正在加载设备列表中...
+                正在加载桌面列表中...
               </td>
             </tr>
           </tbody>
@@ -341,20 +341,20 @@
 
     <div class="info-grid">
       <div class="info-card">
-        <h3>🔗 授权服务域名</h3>
-        <p>在 DeepSeek Harness Remote 插件设置中填入以下授权域名即可自动接入：</p>
+        <h3>🔗 默认管理入口 (RDM)</h3>
+        <p>统一访问与设备管理入口域名：</p>
         <div class="code-box">
-          <span id="domain-text">https://desktop.svc.plus</span>
+          <span id="domain-text">https://rdm.svc.plus</span>
           <button class="copy-btn" onclick="copyDomain()">复制</button>
         </div>
       </div>
       <div class="info-card">
-        <h3>🛡️ 双模式跨平台连接</h3>
-        <p>支持原生 WebRTC 低延迟 H.264 硬件流与加密中继隧道（Relay / Lan / P2P），确保 NAT 穿透与零信任传输。</p>
+        <h3>🖥️ 独立桌面域名规范</h3>
+        <p>每个远程桌面分配单独域名访问：<br><code style="color: #38bdf8;">https://desktop-&lt;name-id&gt;.svc.plus</code><br>支持多桌面一键直达与会话隔离。</p>
       </div>
       <div class="info-card">
-        <h3>⚡ 快速接入指引</h3>
-        <p>1. 开启 DSH 插件中的「允许控制本机」<br>2. 验证主机列表中出现对应 MacBook/PC<br>3. 点击目标设备即可快速浏览与连接</p>
+        <h3>🛡️ Xconnect 网络数据面互联</h3>
+        <p>点对点互联使用 Xconnect Gateway（远端主机）与 Xconnect One（macOS），支持 WireGuard 零信任低延迟直连。</p>
       </div>
     </div>
   </main>
@@ -403,7 +403,8 @@
 
         tbody.innerHTML = items.map(dev => {
           const isOnline = dev.online !== false;
-          const isLocalDesktop = dev.deviceId === 'desktop-host';
+          const desktopDomain = dev.desktopDomain || ('desktop-' + (dev.desktopNameId || 'host') + '.svc.plus');
+          const desktopUrl = dev.desktopUrl || ('https://' + desktopDomain);
           return `
             <tr>
               <td>
@@ -415,9 +416,13 @@
                   </div>
                 </div>
               </td>
+              <td>
+                <a href="${desktopUrl}" target="_blank" class="tag" style="color: #38bdf8; text-decoration: none; font-weight: 600;">
+                  ${escapeHTML(desktopDomain)} ↗
+                </a>
+              </td>
               <td><span style="text-transform: capitalize;">${escapeHTML(dev.platform || 'linux')}</span></td>
               <td><span class="tag">${escapeHTML(dev.role || 'host')}</span></td>
-              <td><span class="tag">v${escapeHTML(dev.clientVersion || '1.0.0')}</span></td>
               <td>
                 <span class="status-badge ${isOnline ? 'online' : 'offline'}">
                   <span class="dot ${isOnline ? 'pulse' : ''}"></span>
@@ -425,7 +430,9 @@
                 </span>
               </td>
               <td>
-                ${isLocalDesktop ? `<a href="/" class="btn btn-primary" style="padding: 4px 10px; font-size: 11px;">打开桌面</a>` : `<span style="color: var(--text-muted); font-size: 12px;">已就绪</span>`}
+                <a href="${desktopUrl}" class="btn btn-primary" style="padding: 4px 10px; font-size: 11px;">
+                  进入专属桌面
+                </a>
               </td>
             </tr>
           `;

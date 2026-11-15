@@ -575,12 +575,23 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "not_found", fmt.Sprintf("API endpoint %s not found", r.URL.Path))
 		return
 	}
-	if strings.HasPrefix(r.URL.Path, "/app/hosts") {
+
+	host := strings.ToLower(r.Host)
+	if colonIdx := strings.Index(host, ":"); colonIdx != -1 {
+		host = host[:colonIdx]
+	}
+
+	// rdm.svc.plus or remote-desktop-management.svc.plus serves Remote Desktop Management portal as default
+	isRDM := host == "rdm.svc.plus" || host == "remote-desktop-management.svc.plus" ||
+		strings.HasPrefix(host, "rdm.") || strings.HasPrefix(host, "remote-desktop-management.")
+
+	if isRDM || strings.HasPrefix(r.URL.Path, "/app/hosts") {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(hostsHTML)
 		return
 	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(indexHTML)

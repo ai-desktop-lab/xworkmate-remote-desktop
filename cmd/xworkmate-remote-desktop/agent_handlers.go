@@ -44,6 +44,40 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// cleanDesktopNameID converts a device name/id into a clean, DNS-friendly name-id for desktop-<name-id>.svc.plus
+func cleanDesktopNameID(deviceID, name, platform string) string {
+	if deviceID == "desktop-host" {
+		return "host"
+	}
+	src := strings.ToLower(name)
+	src = strings.TrimSuffix(src, ".local")
+	src = strings.TrimSuffix(src, ".lan")
+	var b strings.Builder
+	for _, r := range src {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else if r == '-' || r == '_' || r == '.' || r == ' ' {
+			if b.Len() > 0 && !strings.HasSuffix(b.String(), "-") {
+				b.WriteRune('-')
+			}
+		}
+	}
+	res := strings.Trim(b.String(), "-")
+	if len(res) == 0 {
+		if len(deviceID) >= 8 {
+			res = "dev-" + deviceID[:8]
+		} else if platform != "" {
+			res = "dev-" + strings.ToLower(platform)
+		} else {
+			res = "dev"
+		}
+	}
+	if len(res) > 32 {
+		res = strings.TrimRight(res[:32], "-")
+	}
+	return res
+}
+
 // collectAllDevices aggregates desktop-host, registered devices, and active WebSocket control peers
 func (s *Server) collectAllDevices() []map[string]any {
 	wWidth, wHeight := s.agentCtrl.GetGeometry()
@@ -101,19 +135,42 @@ func (s *Server) collectAllDevices() []map[string]any {
 			}
 		}
 	}
+
+	// Assign an individual desktop name id and domain to every remote desktop
+	usedNameIDs := make(map[string]int)
+	for i := range items {
+		devID, _ := items[i]["deviceId"].(string)
+		devName, _ := items[i]["name"].(string)
+		devPlat, _ := items[i]["platform"].(string)
+
+		nameID := cleanDesktopNameID(devID, devName, devPlat)
+		if count := usedNameIDs[nameID]; count > 0 {
+			nameID = fmt.Sprintf("%s-%d", nameID, count+1)
+		}
+		usedNameIDs[nameID]++
+
+		desktopDomain := fmt.Sprintf("desktop-%s.svc.plus", nameID)
+		items[i]["desktopNameId"] = nameID
+		items[i]["nameId"] = nameID
+		items[i]["desktopDomain"] = desktopDomain
+		items[i]["desktopUrl"] = "https://" + desktopDomain
+		items[i]["rdmUrl"] = "https://rdm.svc.plus"
+	}
+
 	return items
 }
 
 // handleAccountDevices returns devices list with serverUrl and transport
 func (s *Server) handleAccountDevices(w http.ResponseWriter, r *http.Request) {
 	items := s.collectAllDevices()
-	serverURL := "https://desktop.svc.plus"
+	serverURL := "https://rdm.svc.plus"
 	if s.cfg.LoginURL != "" {
 		serverURL = s.cfg.LoginURL
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items":     items,
 		"serverUrl": serverURL,
+		"rdmUrl":    "https://rdm.svc.plus",
 		"transport": "webrtc",
 	})
 }
