@@ -20,6 +20,65 @@ func (s *Server) handleOAuthProviders(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleAuthMe returns current account profile conforming to DSH Remote spec
+func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
+	id, _, _ := s.authenticateRequest(r, "")
+	account := "guest@svc.plus"
+	isAdmin := false
+	var roles []string
+	if id != nil {
+		account = firstNonEmpty(id.Email, id.Name, id.UserID, "user@svc.plus")
+		roles = id.Roles
+		for _, role := range roles {
+			if strings.EqualFold(role, "admin") {
+				isAdmin = true
+				break
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"account": account,
+		"isAdmin": isAdmin,
+		"email":   account,
+		"roles":   roles,
+	})
+}
+
+// handleAccountDevices returns devices list with serverUrl and transport
+func (s *Server) handleAccountDevices(w http.ResponseWriter, r *http.Request) {
+	wWidth, wHeight := s.agentCtrl.GetGeometry()
+	items := []map[string]any{
+		{
+			"deviceId":       "desktop-host",
+			"name":           fmt.Sprintf("XWorkmate WebRTC Desktop (%dx%d)", wWidth, wHeight),
+			"role":           "host",
+			"platform":       "linux",
+			"identityKey":    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+			"online":         true,
+			"membershipId":   "desktop-host",
+			"harnessVersion": "1.0.0",
+			"clientVersion":  "1.0.0",
+		},
+	}
+	s.mu.Lock()
+	for id, dev := range s.devices {
+		if id != "desktop-host" {
+			items = append(items, dev)
+		}
+	}
+	s.mu.Unlock()
+
+	serverURL := "https://desktop.svc.plus"
+	if s.cfg.LoginURL != "" {
+		serverURL = s.cfg.LoginURL
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":     items,
+		"serverUrl": serverURL,
+		"transport": "webrtc",
+	})
+}
+
 // handleDeviceRegister handles DSH Remote device registration
 func (s *Server) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 	id, _, _ := s.authenticateRequest(r, "")

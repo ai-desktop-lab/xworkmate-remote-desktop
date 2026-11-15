@@ -38,6 +38,9 @@ var version = "dev"
 //go:embed web/index.html
 var indexHTML []byte
 
+//go:embed web/hosts.html
+var hostsHTML []byte
+
 type Config struct {
 	ListenAddr    string
 	Display       string
@@ -570,6 +573,12 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		writeJSONError(w, http.StatusNotFound, "not_found", fmt.Sprintf("API endpoint %s not found", r.URL.Path))
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/app/hosts") {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(hostsHTML)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1123,12 +1132,19 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) setupRoutes() *http.ServeMux {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/health", s.handleHealthz)
 	mux.HandleFunc("/healthz", s.handleHealthz)
+	mux.HandleFunc("/ready", s.handleHealthz)
+	mux.HandleFunc("/app/hosts", s.handleIndex)
+	mux.HandleFunc("/app/hosts/", s.handleIndex)
+	mux.HandleFunc("/app/", s.handleIndex)
 	mux.HandleFunc("/", s.handleIndex)
 
 	// Auth routes (supporting both /api/ and /api/v1/ prefixes)
 	mux.HandleFunc("/api/auth/status", s.handleAuthStatus)
 	mux.HandleFunc("/api/v1/auth/status", s.handleAuthStatus)
+	mux.HandleFunc("/api/auth/me", s.handleAuthMe)
+	mux.HandleFunc("/api/v1/auth/me", s.handleAuthMe)
 	mux.HandleFunc("/api/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("/api/v1/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("/api/auth/mfa/verify", s.handleAuthLogin)
@@ -1139,6 +1155,8 @@ func (s *Server) setupRoutes() *http.ServeMux {
 	mux.HandleFunc("/api/v1/auth/refresh", s.authMiddleware(s.handleAuthRefresh))
 	mux.HandleFunc("/api/auth/oauth/providers", s.handleOAuthProviders)
 	mux.HandleFunc("/api/v1/auth/oauth/providers", s.handleOAuthProviders)
+	mux.HandleFunc("/api/account/devices", s.handleAccountDevices)
+	mux.HandleFunc("/api/v1/account/devices", s.handleAccountDevices)
 
 	// WebSocket Control Gateway for DSH Remote
 	controlHandler := s.controlGw.Handler()

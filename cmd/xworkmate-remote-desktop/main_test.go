@@ -571,6 +571,39 @@ func TestV1AuthCompatibilityAndDeviceAPIs(t *testing.T) {
 	if devResp["role"] != "host" || devResp["deviceId"] != "desktop-host" {
 		t.Fatalf("unexpected device item: %v", devResp)
 	}
+
+	// 7. Auth me profile endpoint
+	meReq := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	meReq.Header.Set("Authorization", "Bearer test-secret-token-123456")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, meReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for auth/me, got %d", rr.Code)
+	}
+	var meResp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &meResp)
+	if meResp["account"] == nil || meResp["isAdmin"] == nil {
+		t.Fatalf("expected account and isAdmin in auth/me, got %v", meResp)
+	}
+
+	// 8. Account devices endpoint
+	accDevReq := httptest.NewRequest(http.MethodGet, "/api/v1/account/devices", nil)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, accDevReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for account/devices, got %d", rr.Code)
+	}
+
+	// 9. App hosts page
+	hostsReq := httptest.NewRequest(http.MethodGet, "/app/hosts", nil)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, hostsReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /app/hosts, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "设备与主机管理") {
+		t.Fatalf("expected hosts HTML page content, got %s", rr.Body.String()[:100])
+	}
 }
 
 func TestAIAgentDesktopEndpoints(t *testing.T) {

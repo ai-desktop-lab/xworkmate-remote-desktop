@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>设备与主机管理 · XWorkmate Remote Desktop</title>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: rgba(23, 30, 48, 0.7);
+      --border: rgba(255, 255, 255, 0.08);
+      --border-hover: rgba(56, 189, 248, 0.3);
+      --primary: #38bdf8;
+      --primary-hover: #0ea5e9;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.12) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(99, 102, 241, 0.08) 0px, transparent 50%);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 18px 32px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      backdrop-filter: blur(12px);
+      background: rgba(11, 15, 25, 0.85);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: inherit;
+    }
+    .brand-icon {
+      width: 34px;
+      height: 34px;
+      background: linear-gradient(135deg, #0284c7, #38bdf8);
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.4);
+    }
+    .brand-icon svg { width: 20px; height: 20px; fill: white; }
+    .brand-title { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
+    .brand-sub { font-size: 12px; color: var(--text-muted); }
+    .header-actions { display: flex; align-items: center; gap: 12px; }
+    .btn {
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text);
+      transition: all 0.2s ease;
+    }
+    .btn:hover { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.2); }
+    .btn-primary {
+      background: linear-gradient(135deg, #0284c7, #0ea5e9);
+      border-color: #38bdf8;
+      color: white;
+      box-shadow: 0 0 12px rgba(14, 165, 233, 0.35);
+    }
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #0369a1, #0284c7);
+      box-shadow: 0 0 16px rgba(14, 165, 233, 0.5);
+    }
+    main {
+      flex: 1;
+      max-width: 1080px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 32px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    .hero-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px 28px;
+      backdrop-filter: blur(8px);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 20px;
+    }
+    .hero-content h1 { font-size: 20px; margin-bottom: 6px; font-weight: 700; }
+    .hero-content p { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+    .status-summary {
+      display: flex;
+      gap: 16px;
+    }
+    .summary-box {
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 18px;
+      text-align: center;
+    }
+    .summary-box .num { font-size: 22px; font-weight: 700; color: var(--primary); }
+    .summary-box .lbl { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+    .section-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .device-table-container {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      backdrop-filter: blur(8px);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 13px;
+    }
+    th {
+      background: rgba(0, 0, 0, 0.35);
+      padding: 12px 20px;
+      font-weight: 600;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      letter-spacing: 0.3px;
+    }
+    td {
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      vertical-align: middle;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255, 255, 255, 0.02); }
+
+    .device-name-cell {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .os-badge {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border);
+      font-size: 16px;
+    }
+    .device-title { font-weight: 600; font-size: 14px; }
+    .device-subtitle { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .status-badge.online {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .status-badge.offline {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .dot.pulse {
+      box-shadow: 0 0 8px currentColor;
+    }
+
+    .tag {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      font-family: monospace;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .info-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 20px;
+      backdrop-filter: blur(8px);
+    }
+    .info-card h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; color: var(--primary); }
+    .info-card p { font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+    .code-box {
+      margin-top: 10px;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      color: #a5f3fc;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .copy-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 11px;
+      padding: 2px 6px;
+    }
+    .copy-btn:hover { color: var(--text); }
+
+    footer {
+      text-align: center;
+      padding: 24px;
+      font-size: 12px;
+      color: var(--text-muted);
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/" class="brand">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm1 3v6h14V9H5zm3 10h8v2H8v-2z"/></svg>
+      </div>
+      <div>
+        <div class="brand-title">XWorkmate Remote Desktop</div>
+        <div class="brand-sub">DS Harness Remote 工作台接入中心</div>
+      </div>
+    </a>
+    <div class="header-actions">
+      <button class="btn" id="refresh-btn" onclick="fetchDevices()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+        刷新列表
+      </button>
+      <a href="/" class="btn btn-primary">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        打开图形桌面
+      </a>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero-card">
+      <div class="hero-content">
+        <h1>设备与主机管理 (Host Management)</h1>
+        <p>统一管理注册至当前授权域名的 Remote Desktop 与 DSH Remote 主机。支持跨平台（macOS / Linux / Windows）互联互通。</p>
+      </div>
+      <div class="status-summary">
+        <div class="summary-box">
+          <div class="num" id="total-hosts">-</div>
+          <div class="lbl">可用主机数</div>
+        </div>
+        <div class="summary-box">
+          <div class="num" id="online-hosts" style="color: var(--success);">-</div>
+          <div class="lbl">实时在线</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">
+        <span>已注册设备与主机列表</span>
+        <span id="last-updated" style="font-size: 11px; text-transform: none;"></span>
+      </div>
+      <div class="device-table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>主机名称 / 设备</th>
+              <th>操作系统 / 平台</th>
+              <th>角色</th>
+              <th>协议 / 版本</th>
+              <th>状态</th>
+              <th>快捷操作</th>
+            </tr>
+          </thead>
+          <tbody id="devices-tbody">
+            <tr>
+              <td colspan="6" style="text-align: center; padding: 32px; color: var(--text-muted);">
+                正在加载设备列表中...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="info-grid">
+      <div class="info-card">
+        <h3>🔗 授权服务域名</h3>
+        <p>在 DeepSeek Harness Remote 插件设置中填入以下授权域名即可自动接入：</p>
+        <div class="code-box">
+          <span id="domain-text">https://desktop.svc.plus</span>
+          <button class="copy-btn" onclick="copyDomain()">复制</button>
+        </div>
+      </div>
+      <div class="info-card">
+        <h3>🛡️ 双模式跨平台连接</h3>
+        <p>支持原生 WebRTC 低延迟 H.264 硬件流与加密中继隧道（Relay / Lan / P2P），确保 NAT 穿透与零信任传输。</p>
+      </div>
+      <div class="info-card">
+        <h3>⚡ 快速接入指引</h3>
+        <p>1. 开启 DSH 插件中的「允许控制本机」<br>2. 验证主机列表中出现对应 MacBook/PC<br>3. 点击目标设备即可快速浏览与连接</p>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    XWorkmate Remote Desktop &copy; 2026 · AI Desktop Lab · 端到端加密零信任架构
+  </footer>
+
+  <script>
+    function getPlatformIcon(platform) {
+      platform = (platform || '').toLowerCase();
+      if (platform.includes('darwin') || platform.includes('mac') || platform.includes('osx')) return '🍎';
+      if (platform.includes('win')) return '🪟';
+      return '🐧';
+    }
+
+    function copyDomain() {
+      const text = document.getElementById('domain-text').innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        alert('域名已复制到剪贴板: ' + text);
+      });
+    }
+
+    async function fetchDevices() {
+      const tbody = document.getElementById('devices-tbody');
+      try {
+        const res = await fetch('/api/v1/devices');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const items = data.items || [];
+        
+        document.getElementById('total-hosts').innerText = items.length;
+        const onlineCount = items.filter(d => d.online !== false).length;
+        document.getElementById('online-hosts').innerText = onlineCount;
+        document.getElementById('last-updated').innerText = '最后同步: ' + new Date().toLocaleTimeString();
+
+        if (items.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; padding: 32px; color: var(--text-muted);">暂无注册设备</td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = items.map(dev => {
+          const isOnline = dev.online !== false;
+          const isLocalDesktop = dev.deviceId === 'desktop-host';
+          return `
+            <tr>
+              <td>
+                <div class="device-name-cell">
+                  <div class="os-badge">${getPlatformIcon(dev.platform)}</div>
+                  <div>
+                    <div class="device-title">${escapeHTML(dev.name || dev.deviceId)}</div>
+                    <div class="device-subtitle"><span class="tag">${escapeHTML(dev.deviceId)}</span></div>
+                  </div>
+                </div>
+              </td>
+              <td><span style="text-transform: capitalize;">${escapeHTML(dev.platform || 'linux')}</span></td>
+              <td><span class="tag">${escapeHTML(dev.role || 'host')}</span></td>
+              <td><span class="tag">v${escapeHTML(dev.clientVersion || '1.0.0')}</span></td>
+              <td>
+                <span class="status-badge ${isOnline ? 'online' : 'offline'}">
+                  <span class="dot ${isOnline ? 'pulse' : ''}"></span>
+                  ${isOnline ? '在线' : '离线'}
+                </span>
+              </td>
+              <td>
+                ${isLocalDesktop ? `<a href="/" class="btn btn-primary" style="padding: 4px 10px; font-size: 11px;">打开桌面</a>` : `<span style="color: var(--text-muted); font-size: 12px;">已就绪</span>`}
+              </td>
+            </tr>
+          `;
+        }).join('');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; padding: 24px; color: var(--danger);">加载失败: ${escapeHTML(err.message)}</td></tr>`;
+      }
+    }
+
+    function escapeHTML(str) {
+      if (!str) return '';
+      return String(str).replace(/[&<>'"]/g, 
+        tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+      );
+    }
+
+    fetchDevices();
+    setInterval(fetchDevices, 5000);
+  </script>
+</body>
+</html>
