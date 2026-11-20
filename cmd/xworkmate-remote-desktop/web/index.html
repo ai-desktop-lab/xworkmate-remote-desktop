@@ -761,9 +761,6 @@
         });
         if (resp.ok) {
           authState = await resp.json();
-          if (authState.token && !tokenInput.value) {
-            tokenInput.value = authState.token;
-          }
           renderAuthState();
         }
       } catch (e) {}
@@ -969,9 +966,9 @@ POST ${origin}/api/v1/desktop/action
     if (aiAgentBtn && aiAgentDialog) {
       aiAgentBtn.addEventListener("click", () => {
         const origin = window.location.origin;
-        const token = (tokenInput && tokenInput.value.trim()) || authState.token || "";
+        const token = (tokenInput && tokenInput.value.trim()) || "";
         if (agentActiveToken) {
-          agentActiveToken.textContent = token || "(未获取到访问令牌，请检查服务器配置)";
+          agentActiveToken.textContent = token || "(请在页面中输入访问令牌)";
         }
         const promptText = generateAgentSystemPrompt(origin, token);
         if (aiSystemPromptText) aiSystemPromptText.value = promptText;
@@ -997,7 +994,7 @@ POST ${origin}/api/v1/desktop/action
 
       if (copyAgentTokenBtn) {
         copyAgentTokenBtn.addEventListener("click", async () => {
-          const token = (tokenInput && tokenInput.value.trim()) || authState.token || "";
+          const token = (tokenInput && tokenInput.value.trim()) || "";
           if (!token) return;
           try {
             await navigator.clipboard.writeText(token);
