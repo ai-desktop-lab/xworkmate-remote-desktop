@@ -844,6 +844,7 @@ func (s *Server) revokeAccountsSession(ctx context.Context, token string) {
 }
 
 func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -864,10 +865,6 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 		"accounts_enabled": s.cfg.AccountsURL != "",
 		"login_url":        s.cfg.LoginURL,
 	}
-	if s.cfg.Token != "" {
-		resp["token"] = s.cfg.Token
-	}
-
 	if s.cfg.Token == "" && s.cfg.AccountsURL == "" {
 		resp["authenticated"] = true
 		resp["method"] = "none"

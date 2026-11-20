@@ -881,3 +881,31 @@ func TestControlWebSocketRoute(t *testing.T) {
 		t.Fatalf("expected ID and Timestamp in pong")
 	}
 }
+
+func TestAuthStatusDoesNotReturnStaticToken(t *testing.T) {
+	const token = "test-only-static-token"
+	mux := NewServer(Config{Token: token}).setupRoutes()
+	for _, path := range []string{"/api/auth/status", "/api/v1/auth/status"} {
+		for _, authenticated := range []bool{false, true} {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			if authenticated {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+			res := httptest.NewRecorder()
+			mux.ServeHTTP(res, req)
+			var status map[string]any
+			if res.Code != http.StatusOK || json.Unmarshal(res.Body.Bytes(), &status) != nil {
+				t.Fatalf("%s: expected JSON status with HTTP 200, got %d", path, res.Code)
+			}
+			if _, present := status["token"]; present || strings.Contains(res.Body.String(), token) {
+				t.Fatalf("%s: status exposed a static credential", path)
+			}
+			if status["authenticated"] != authenticated || status["token_enabled"] != true {
+				t.Fatalf("%s: incorrect authentication or token-enabled state", path)
+			}
+			if res.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("%s: expected Cache-Control: no-store", path)
+			}
+		}
+	}
+}
