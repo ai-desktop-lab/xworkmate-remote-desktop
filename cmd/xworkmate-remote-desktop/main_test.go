@@ -821,6 +821,7 @@ func TestControlWebSocketRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed config: %v", err)
 	}
+	config.Header.Set("Authorization", "Bearer test-token")
 
 	ws, err := websocket.DialConfig(config)
 	if err != nil {

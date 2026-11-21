@@ -263,7 +263,7 @@ type Server struct {
 }
 
 func NewServer(cfg Config) *Server {
-	return &Server{
+	s := &Server{
 		cfg:        cfg,
 		service:    desktop.GetService(),
 		agentCtrl:  desktop.NewAgentController(cfg.Display),
@@ -272,6 +272,96 @@ func NewServer(cfg Config) *Server {
 		devices:    make(map[string]map[string]any),
 		authCache:  make(map[string]authCacheEntry),
 	}
+	// Fail closed on control WebSocket handshake when token or accounts auth is configured.
+	s.controlGw.Authenticate = s.authenticateControlUpgrade
+	return s
+}
+
+func (s *Server) authRequired() bool {
+	return s.cfg.Token != "" || s.cfg.AccountsURL != ""
+}
+
+// authenticateControlUpgrade is used by ControlGateway handshake (defense in depth).
+// The HTTP wrapper in setupRoutes returns a proper 401 before the WebSocket hijack.
+func (s *Server) authenticateControlUpgrade(r *http.Request) error {
+	if err := s.authorizeControlOrigin(r); err != nil {
+		return err
+	}
+	if !s.authRequired() {
+		return nil
+	}
+	_, _, err := s.authenticateRequest(r, "")
+	return err
+}
+
+func (s *Server) authorizeControlOrigin(r *http.Request) error {
+	raw := strings.TrimSpace(r.Header.Get("Origin"))
+	if raw == "" {
+		// Non-browser clients (Bearer) may omit Origin.
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return errors.New("invalid origin")
+	}
+	originHost := strings.ToLower(u.Hostname())
+	if originHost == "localhost" || originHost == "127.0.0.1" || originHost == "::1" {
+		return nil
+	}
+
+	allowed := map[string]struct{}{}
+	if h := normalizeRequestHost(r); h != "" {
+		allowed[h] = struct{}{}
+	}
+	for _, base := range []string{s.cfg.AccountsURL, s.cfg.LoginURL} {
+		if strings.TrimSpace(base) == "" {
+			continue
+		}
+		pu, err := url.Parse(base)
+		if err != nil {
+			continue
+		}
+		h := strings.ToLower(pu.Hostname())
+		if h == "" {
+			continue
+		}
+		allowed[h] = struct{}{}
+		parts := strings.Split(h, ".")
+		if len(parts) >= 2 {
+			allowed[strings.Join(parts[len(parts)-2:], ".")] = struct{}{}
+		}
+	}
+	if _, ok := allowed[originHost]; ok {
+		return nil
+	}
+	for h := range allowed {
+		if h != "" && strings.HasSuffix(originHost, "."+h) {
+			return nil
+		}
+	}
+	return errors.New("origin not allowed")
+}
+
+func (s *Server) controlAuthHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := s.authorizeControlOrigin(r); err != nil {
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		if !s.authRequired() {
+			next.ServeHTTP(w, r)
+			return
+		}
+		_, status, err := s.authenticateRequest(r, "")
+		if err != nil {
+			if status == 0 {
+				status = http.StatusUnauthorized
+			}
+			http.Error(w, http.StatusText(status), status)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func firstNonEmpty(values ...string) string {
@@ -1169,8 +1259,10 @@ func (s *Server) setupRoutes() *http.ServeMux {
 	mux.HandleFunc("/api/account/devices", s.handleAccountDevices)
 	mux.HandleFunc("/api/v1/account/devices", s.handleAccountDevices)
 
-	// WebSocket Control Gateway for DSH Remote
-	controlHandler := s.controlGw.Handler()
+	// WebSocket Control Gateway for DSH Remote.
+	// Auth is enforced on the HTTP upgrade (401/403) before the WebSocket hijack
+	// so cookies forwarded by Fluxgate and Authorization headers fail closed.
+	controlHandler := s.controlAuthHandler(s.controlGw.Handler())
 	mux.Handle("/ws/v1/connect", controlHandler)
 	mux.Handle("/ws/v1/connect/", controlHandler)
 	mux.Handle("/api/control", controlHandler)

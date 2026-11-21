@@ -1,6 +1,9 @@
 package desktop
 
 import (
+	"encoding/json"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -122,5 +125,69 @@ func TestControlGatewayCapabilityNegotiation(t *testing.T) {
 	}
 	if len(caps) != 1 || caps[0] != "transport.relay" {
 		t.Fatalf("expected strictly ['transport.relay'], got %v", caps)
+	}
+}
+
+func TestControlGatewayRejectsUnauthenticatedHandshake(t *testing.T) {
+	gw := NewControlGateway()
+	gw.Authenticate = func(r *http.Request) error {
+		return errors.New("authentication required")
+	}
+	ts := httptest.NewServer(gw.Handler())
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	config, err := websocket.NewConfig(wsURL, "http://localhost")
+	if err != nil {
+		t.Fatalf("failed to create ws config: %v", err)
+	}
+	if _, err := websocket.DialConfig(config); err == nil {
+		t.Fatal("expected handshake to fail without auth")
+	}
+}
+
+func TestControlGatewayAllowsAuthenticatedHandshake(t *testing.T) {
+	gw := NewControlGateway()
+	var seenAuth bool
+	gw.Authenticate = func(r *http.Request) error {
+		if r.Header.Get("Authorization") != "Bearer good" {
+			return errors.New("authentication required")
+		}
+		seenAuth = true
+		return nil
+	}
+	ts := httptest.NewServer(gw.Handler())
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	config, err := websocket.NewConfig(wsURL, "http://localhost")
+	if err != nil {
+		t.Fatalf("failed to create ws config: %v", err)
+	}
+	config.Header.Set("Authorization", "Bearer good")
+	ws, err := websocket.DialConfig(config)
+	if err != nil {
+		t.Fatalf("expected authenticated dial to succeed: %v", err)
+	}
+	defer ws.Close()
+	if !seenAuth {
+		t.Fatal("expected authenticator to run")
+	}
+
+	hello := ControlFrame{V: 1, Type: "hello", Payload: map[string]any{"role": "host", "deviceId": "auth-host"}}
+	if err := websocket.JSON.Send(ws, hello); err != nil {
+		t.Fatalf("send hello: %v", err)
+	}
+	_ = ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var ack ControlFrame
+	if err := websocket.JSON.Receive(ws, &ack); err != nil {
+		t.Fatalf("receive ack: %v", err)
+	}
+	if ack.Type != "hello.ack" {
+		t.Fatalf("expected hello.ack, got %s", ack.Type)
+	}
+	raw, _ := json.Marshal(ack)
+	if strings.Contains(strings.ToLower(string(raw)), "bearer") || strings.Contains(string(raw), "good") {
+		t.Fatalf("hello.ack unexpectedly disclosed a credential: %s", raw)
 	}
 }

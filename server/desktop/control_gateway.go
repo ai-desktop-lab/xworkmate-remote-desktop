@@ -57,10 +57,15 @@ type ControlLink struct {
 	PreferredTransports []string
 }
 
+// ControlAuthenticator authorizes a control-plane WebSocket upgrade.
+// A nil authenticator means authentication is not configured (local protocol tests only).
+type ControlAuthenticator func(r *http.Request) error
+
 type ControlGateway struct {
-	mu    sync.RWMutex
-	peers map[string]*ControlPeer
-	links map[string]*ControlLink
+	mu           sync.RWMutex
+	peers        map[string]*ControlPeer
+	links        map[string]*ControlLink
+	Authenticate ControlAuthenticator
 }
 
 func NewControlGateway() *ControlGateway {
@@ -118,11 +123,38 @@ func randomHex(bytes int) string {
 func (g *ControlGateway) Handler() http.Handler {
 	server := websocket.Server{
 		Handshake: func(config *websocket.Config, req *http.Request) error {
-			return nil
+			if g.Authenticate == nil {
+				return nil
+			}
+			return g.Authenticate(req)
 		},
 		Handler: g.handleWebSocket,
 	}
 	return server
+}
+
+func (g *ControlGateway) authorizeExistingConn(ws *websocket.Conn) error {
+	if g.Authenticate == nil {
+		return nil
+	}
+	req := ws.Request()
+	if req == nil {
+		return errors.New("authentication required")
+	}
+	return g.Authenticate(req)
+}
+
+func controlAuthErrorFrame(message string) ControlFrame {
+	return ControlFrame{
+		V:         1,
+		ID:        "cf-" + randomHex(8),
+		Type:      "error",
+		Timestamp: time.Now().UnixMilli(),
+		Payload: map[string]any{
+			"code":    "UNAUTHORIZED",
+			"message": message,
+		},
+	}
 }
 
 func (g *ControlGateway) handleWebSocket(ws *websocket.Conn) {
@@ -145,6 +177,10 @@ func (g *ControlGateway) handleWebSocket(ws *websocket.Conn) {
 
 		switch frame.Type {
 		case "hello":
+			if err := g.authorizeExistingConn(ws); err != nil {
+				_ = websocket.JSON.Send(ws, controlAuthErrorFrame("authentication required"))
+				return
+			}
 			role, _ := frame.Payload["role"].(string)
 			deviceID, _ := frame.Payload["deviceId"].(string)
 			version, _ := frame.Payload["clientVersion"].(string)
@@ -197,7 +233,7 @@ func (g *ControlGateway) handleWebSocket(ws *websocket.Conn) {
 			g.mu.Unlock()
 			currentPeer = peer
 
-			log.Printf("[ControlGateway] Authenticated %s device: %s (version: %s, capabilities: %v)", role, deviceID, version, negotiated)
+			log.Printf("[ControlGateway] Registered %s device: %s (version: %s, capabilities: %v)", role, deviceID, version, negotiated)
 
 			_ = peer.Send(ControlFrame{
 				V:         1,
