@@ -1,0 +1,81 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - run: go vet ./...
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build multi-platform artifacts
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/xworkmate-remote-desktop-linux-amd64 ./cmd/xworkmate-remote-desktop
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o dist/xworkmate-remote-desktop-linux-arm64 ./cmd/xworkmate-remote-desktop
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/xworkmate-remote-desktop-macos-amd64 ./cmd/xworkmate-remote-desktop
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o dist/xworkmate-remote-desktop-macos-arm64 ./cmd/xworkmate-remote-desktop
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/xworkmate-remote-desktop-windows-amd64.exe ./cmd/xworkmate-remote-desktop
+          (cd dist && sha256sum * > SHA256SUMS)
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+      - name: Load Vault mirror & dispatch secrets
+        id: vault
+        continue-on-error: true
+        uses: hashicorp/vault-action@v4
+        with:
+          url: https://vault.svc.plus
+          method: jwt
+          role: github-actions-xworkmate-remote-desktop
+          jwtGithubAudience: vault
+          ignoreNotFound: true
+          secrets: |
+            kv/data/prod/platform/storage/cloudflare-r2 access_key_id | R2_ACCESS_KEY_ID ;
+            kv/data/prod/platform/storage/cloudflare-r2 secret_access_key | R2_SECRET_ACCESS_KEY ;
+            kv/data/prod/platform/storage/cloudflare-r2 bucket | R2_BUCKET ;
+            kv/data/prod/platform/storage/cloudflare-r2 endpoint | R2_ENDPOINT ;
+            kv/data/prod/platform/storage/aliyun-oss access_key_id | OSS_ACCESS_KEY_ID ;
+            kv/data/prod/platform/storage/aliyun-oss access_key_secret | OSS_ACCESS_KEY_SECRET ;
+            kv/data/prod/platform/storage/aliyun-oss bucket | OSS_BUCKET ;
+            kv/data/prod/platform/storage/aliyun-oss endpoint | OSS_ENDPOINT ;
+            kv/data/prod/platform/distribution/dispatch-token token | DISPATCH_TOKEN ;
+      - name: Sync dual mirrors & notify distribution hub
+        env:
+          R2_ACCESS_KEY_ID: ${{ steps.vault.outputs.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ steps.vault.outputs.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ steps.vault.outputs.R2_BUCKET }}
+          R2_ENDPOINT: ${{ steps.vault.outputs.R2_ENDPOINT }}
+          OSS_ACCESS_KEY_ID: ${{ steps.vault.outputs.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ steps.vault.outputs.OSS_ACCESS_KEY_SECRET }}
+          OSS_BUCKET: ${{ steps.vault.outputs.OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ steps.vault.outputs.OSS_ENDPOINT }}
+          DISPATCH_TOKEN: ${{ steps.vault.outputs.DISPATCH_TOKEN }}
+        run: ./scripts/ci/sync_release_mirrors.sh xworkmate-remote-desktop "${GITHUB_REF_NAME}" dist latest
